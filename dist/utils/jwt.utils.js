@@ -10,10 +10,10 @@ const JWT_EXPIRE = process.env.JWT_EXPIRE || '7d';
 // Generate JWT token
 const generateToken = (userId) => {
     const payload = { id: userId };
-    // Don't use SignOptions, just pass the object directly
-    return jsonwebtoken_1.default.sign(payload, JWT_SECRET, {
+    const options = {
         expiresIn: JWT_EXPIRE,
-    });
+    };
+    return jsonwebtoken_1.default.sign(payload, JWT_SECRET, options);
 };
 exports.generateToken = generateToken;
 // Verify JWT token

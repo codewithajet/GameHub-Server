@@ -11,10 +11,11 @@ interface JwtPayload {
 export const generateToken = (userId: string): string => {
   const payload: JwtPayload = { id: userId };
 
-  // Don't use SignOptions, just pass the object directly
-  return jwt.sign(payload, JWT_SECRET, {
+  const options = {
     expiresIn: JWT_EXPIRE,
-  });
+  };
+
+  return jwt.sign(payload, JWT_SECRET, options as any);
 };
 
 // Verify JWT token
