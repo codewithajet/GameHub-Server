@@ -11,27 +11,18 @@ const JWT_EXPIRE = process.env.JWT_EXPIRE || '7d';
 const generateToken = (userId) => {
     const payload = { id: userId };
     const options = {
-        expiresIn: JWT_EXPIRE
+        expiresIn: JWT_EXPIRE, // ✅ cast to string | number
     };
-    // Explicitly cast secret as string to satisfy TypeScript
     return jsonwebtoken_1.default.sign(payload, JWT_SECRET, options);
 };
 exports.generateToken = generateToken;
 // Verify JWT token
 const verifyToken = (token) => {
-    try {
-        const decoded = jsonwebtoken_1.default.verify(token, JWT_SECRET);
-        // Ensure decoded has the expected id property
-        if (typeof decoded === 'object' && decoded !== null && 'id' in decoded) {
-            return { id: decoded.id };
-        }
-        else {
-            throw new Error('Invalid token payload');
-        }
+    const decoded = jsonwebtoken_1.default.verify(token, JWT_SECRET);
+    if (typeof decoded === 'object' && decoded !== null && 'id' in decoded) {
+        return { id: decoded.id };
     }
-    catch (error) {
-        throw new Error('Invalid token');
-    }
+    throw new Error('Invalid token');
 };
 exports.verifyToken = verifyToken;
 //# sourceMappingURL=jwt.utils.js.map

@@ -12,25 +12,18 @@ export const generateToken = (userId: string): string => {
   const payload: JwtPayload = { id: userId };
 
   const options: SignOptions = {
-    expiresIn: JWT_EXPIRE
+    expiresIn: JWT_EXPIRE as string | number, // ✅ cast to string | number
   };
 
-  // Explicitly cast secret as string to satisfy TypeScript
   return jwt.sign(payload, JWT_SECRET as jwt.Secret, options);
 };
 
 // Verify JWT token
 export const verifyToken = (token: string): JwtPayload => {
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET as jwt.Secret) as JwtPayloadType;
-    
-    // Ensure decoded has the expected id property
-    if (typeof decoded === 'object' && decoded !== null && 'id' in decoded) {
-      return { id: decoded.id as string };
-    } else {
-      throw new Error('Invalid token payload');
-    }
-  } catch (error) {
-    throw new Error('Invalid token');
+  const decoded = jwt.verify(token, JWT_SECRET as jwt.Secret) as JwtPayloadType;
+
+  if (typeof decoded === 'object' && decoded !== null && 'id' in decoded) {
+    return { id: decoded.id as string };
   }
+  throw new Error('Invalid token');
 };
