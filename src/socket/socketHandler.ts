@@ -1,5 +1,6 @@
 // ============================================
-// FILE: src/socket/socketHandler.ts
+// ENHANCED: src/socket/socketHandler.ts
+// Shows queue size to players
 // ============================================
 import { Server, Socket } from 'socket.io';
 import mongoose from 'mongoose';
@@ -21,12 +22,22 @@ interface WaitingPlayer {
   socketId: string;
   username: string;
   gameType: string;
+  joinedAt: number; // Add timestamp
 }
 
-// In-memory storage for active connections and waiting queues
 const connectedUsers = new Map<string, SocketUser>();
-const waitingQueue = new Map<string, WaitingPlayer[]>(); // gameType -> players[]
-const activeGames = new Map<string, string>(); // userId -> roomId
+const waitingQueue = new Map<string, WaitingPlayer[]>();
+const activeGames = new Map<string, string>();
+
+// NEW: Broadcast queue updates to all connected clients
+function broadcastQueueUpdate(io: Server, gameType: string) {
+  const queue = waitingQueue.get(gameType) || [];
+  io.emit('queue-update', {
+    gameType,
+    playersWaiting: queue.length,
+    players: queue.map(p => ({ username: p.username, waitTime: Date.now() - p.joinedAt }))
+  });
+}
 
 export function initializeSocket(io: Server) {
   io.use(async (socket: Socket, next) => {
@@ -59,24 +70,30 @@ export function initializeSocket(io: Server) {
 
     console.log(`✅ User connected: ${username} (${userId})`);
 
-    // Store connected user
     connectedUsers.set(userId, {
       userId,
       socketId: socket.id,
       username,
     });
 
-    // Update user online status
     User.findByIdAndUpdate(userId, {
       isOnline: true,
       lastActive: new Date(),
     }).exec();
 
-    // Send connection confirmation
     socket.emit('connected', {
       userId,
       username,
       message: 'Connected to GameHub',
+    });
+
+    // NEW: Send current queue sizes on connection
+    ['tic-tac-toe', 'chess', 'checkers'].forEach(gameType => {
+      const queue = waitingQueue.get(gameType) || [];
+      socket.emit('queue-update', {
+        gameType,
+        playersWaiting: queue.length
+      });
     });
 
     // ===================================
@@ -107,21 +124,35 @@ export function initializeSocket(io: Server) {
 
       // Check if someone is waiting
       if (queue.length > 0) {
-        const opponent = queue.shift()!;
+        // Find first player that isn't the current user
+        const opponentIndex = queue.findIndex(p => p.userId !== userId);
         
-        // Don't match with yourself
-        if (opponent.userId === userId) {
-          queue.push({ userId, socketId: socket.id, username, gameType });
+        if (opponentIndex === -1) {
+          // Only self in queue, add to queue
+          queue.push({ 
+            userId, 
+            socketId: socket.id, 
+            username, 
+            gameType,
+            joinedAt: Date.now() 
+          });
+          socket.emit('searching', { 
+            message: 'Searching for opponent...',
+            queuePosition: queue.length,
+            playersWaiting: queue.length
+          });
+          broadcastQueueUpdate(io, gameType);
           return;
         }
 
+        const opponent = queue.splice(opponentIndex, 1)[0];
+        
         // Create game room
         const roomId = `${gameType}-${Date.now()}`;
         
         socket.join(roomId);
         io.sockets.sockets.get(opponent.socketId)?.join(roomId);
 
-        // Store active game
         activeGames.set(userId, roomId);
         activeGames.set(opponent.userId, roomId);
 
@@ -133,7 +164,7 @@ export function initializeSocket(io: Server) {
             player1: new mongoose.Types.ObjectId(userId),
             player2: new mongoose.Types.ObjectId(opponent.userId),
           },
-          currentTurn: new mongoose.Types.ObjectId(userId), // Player 1 starts
+          currentTurn: new mongoose.Types.ObjectId(userId),
           startedAt: new Date(),
         });
 
@@ -150,13 +181,28 @@ export function initializeSocket(io: Server) {
         });
 
         console.log(`🎮 Match created: ${username} vs ${opponent.username}`);
+        
+        // Broadcast queue update
+        broadcastQueueUpdate(io, gameType);
       } else {
         // Add to waiting queue
-        queue.push({ userId, socketId: socket.id, username, gameType });
+        queue.push({ 
+          userId, 
+          socketId: socket.id, 
+          username, 
+          gameType,
+          joinedAt: Date.now() 
+        });
         socket.emit('searching', { 
           message: 'Searching for opponent...',
-          queuePosition: queue.length 
+          queuePosition: queue.length,
+          playersWaiting: queue.length
         });
+        
+        // Broadcast queue update to all clients
+        broadcastQueueUpdate(io, gameType);
+        
+        console.log(`⏳ ${username} added to ${gameType} queue (${queue.length} waiting)`);
       }
     });
 
@@ -168,8 +214,19 @@ export function initializeSocket(io: Server) {
         if (index !== -1) {
           queue.splice(index, 1);
           socket.emit('search-cancelled', { message: 'Search cancelled' });
+          broadcastQueueUpdate(io, gameType);
+          console.log(`❌ ${username} cancelled search (${queue.length} remaining)`);
         }
       }
+    });
+
+    // NEW: Get current queue status
+    socket.on('get-queue-status', ({ gameType }) => {
+      const queue = waitingQueue.get(gameType) || [];
+      socket.emit('queue-update', {
+        gameType,
+        playersWaiting: queue.length
+      });
     });
 
     // ===================================
@@ -180,12 +237,52 @@ export function initializeSocket(io: Server) {
     handleCheckers(socket, io, activeGames);
 
     // ===================================
+    // LEAVE GAME
+    // ===================================
+    socket.on('leave-game', async ({ sessionId }) => {
+      console.log(`🚪 ${username} leaving game ${sessionId || 'unknown'}`);
+      
+      const roomId = activeGames.get(userId);
+      
+      if (roomId) {
+        socket.to(roomId).emit('opponent-disconnected', {
+          message: 'Opponent left the game',
+        });
+        
+        activeGames.delete(userId);
+        socket.leave(roomId);
+        
+        if (sessionId) {
+          try {
+            await GameSession.findByIdAndUpdate(sessionId, {
+              status: 'abandoned',
+              finishedAt: new Date(),
+            });
+          } catch (error) {
+            console.error('Error updating session:', error);
+          }
+        }
+        
+        console.log(`✅ ${username} left game successfully`);
+      }
+      
+      // Remove from all queues
+      waitingQueue.forEach((queue, gameType) => {
+        const index = queue.findIndex((p) => p.userId === userId);
+        if (index !== -1) {
+          queue.splice(index, 1);
+          broadcastQueueUpdate(io, gameType);
+          console.log(`🗑️ Removed ${username} from ${gameType} queue`);
+        }
+      });
+    });
+
+    // ===================================
     // DISCONNECT
     // ===================================
     socket.on('disconnect', async () => {
       console.log(`❌ User disconnected: ${username}`);
 
-      // Remove from connected users
       connectedUsers.delete(userId);
 
       // Remove from all waiting queues
@@ -193,6 +290,7 @@ export function initializeSocket(io: Server) {
         const index = queue.findIndex((p) => p.userId === userId);
         if (index !== -1) {
           queue.splice(index, 1);
+          broadcastQueueUpdate(io, gameType);
         }
       });
 
@@ -205,11 +303,10 @@ export function initializeSocket(io: Server) {
         activeGames.delete(userId);
       }
 
-      // Update user status
       await User.findByIdAndUpdate(userId, {
         isOnline: false,
         lastActive: new Date(),
       });
     });
   });
-};
+}
