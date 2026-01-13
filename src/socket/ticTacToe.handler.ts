@@ -1,6 +1,6 @@
 // ============================================
-// FIX: src/socket/ticTacToe.handler.ts
-// Replace the User.findByIdAndUpdate calls
+// FIXED: src/socket/ticTacToe.handler.ts
+// Properly maintains board state across moves
 // ============================================
 import { Server, Socket } from 'socket.io';
 import mongoose from 'mongoose';
@@ -17,28 +17,36 @@ export const handleTicTacToe = (
     const userId = socket.data.userId;
 
     try {
+      console.log(`\n🎯 Tic-Tac-Toe move from ${userId} at position ${position}`);
+      
       const session = await GameSession.findById(sessionId);
       
       if (!session) {
+        console.error('❌ Game session not found');
         socket.emit('error', { message: 'Game session not found' });
         return;
       }
 
       // Verify it's player's turn
       if (session.currentTurn?.toString() !== userId) {
+        console.error('❌ Not player\'s turn');
         socket.emit('error', { message: 'Not your turn' });
         return;
       }
 
-      // Update game state
+      // Initialize or get existing board
       if (!session.gameState.board) {
         session.gameState = { board: Array(9).fill(null) };
       }
 
       const board = session.gameState.board;
       
+      console.log('📊 Current board state:', board);
+      
+      // Check if position is already taken
       if (board[position] !== null) {
-        socket.emit('error', { message: 'Invalid move' });
+        console.error('❌ Position already taken');
+        socket.emit('error', { message: 'Invalid move - position already taken' });
         return;
       }
 
@@ -46,7 +54,12 @@ export const handleTicTacToe = (
       const isPlayer1 = session.players.player1.toString() === userId;
       const symbol = isPlayer1 ? 'X' : 'O';
       
+      console.log(`✅ Player ${isPlayer1 ? '1' : '2'} (${symbol}) making move at position ${position}`);
+      
+      // Update the board - IMPORTANT: Modify the existing board array
       board[position] = symbol;
+      
+      console.log('📊 Updated board state:', board);
 
       // Add move to history
       session.moves.push({
@@ -57,6 +70,8 @@ export const handleTicTacToe = (
 
       // Check for winner
       const winner = checkTicTacToeWinner(board);
+      
+      console.log('🏆 Winner check result:', winner);
       
       if (winner) {
         session.status = 'finished';
@@ -110,27 +125,38 @@ export const handleTicTacToe = (
         session.currentTurn = isPlayer1 ? session.players.player2 : session.players.player1;
       }
 
+      // Save the session with updated board
       await session.save();
+      
+      console.log('💾 Session saved with board:', session.gameState.board);
 
-      // Broadcast move to room
-      io.to(roomId).emit('tic-tac-toe:move-made', {
+      // Broadcast move to room - send the COMPLETE board state
+      const moveData = {
         position,
         symbol,
-        board,
+        board: session.gameState.board, // Send complete board
         currentTurn: session.currentTurn?.toString(),
         winner: session.gameState.winner,
         gameOver: session.status === 'finished',
-      });
+      };
+      
+      console.log('📤 Broadcasting move to room:', roomId);
+      console.log('📦 Move data:', moveData);
+      
+      io.to(roomId).emit('tic-tac-toe:move-made', moveData);
 
       // Clean up active games if finished
       if (session.status === 'finished') {
+        console.log('🏁 Game finished, cleaning up active games');
         activeGames.delete(session.players.player1.toString());
         if (session.players.player2) {
           activeGames.delete(session.players.player2.toString());
         }
       }
+      
+      console.log('✅ Move processed successfully\n');
     } catch (error) {
-      console.error('Tic-Tac-Toe move error:', error);
+      console.error('❌ Tic-Tac-Toe move error:', error);
       socket.emit('error', { message: 'Error processing move' });
     }
   });
@@ -150,6 +176,7 @@ function checkTicTacToeWinner(board: any[]): 'X' | 'O' | 'TIE' | null {
     }
   }
 
+  // Check for tie - all positions filled
   if (board.every((cell) => cell !== null)) {
     return 'TIE';
   }
