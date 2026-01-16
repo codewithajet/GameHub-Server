@@ -13,7 +13,7 @@ const handleTicTacToe = (socket, io, activeGames) => {
         const userId = socket.data.userId;
         try {
             console.log(`\n🎯 Tic-Tac-Toe move from ${userId} at position ${position}`);
-            const session = await GameSession_1.default.findById(sessionId);
+            let session = await GameSession_1.default.findById(sessionId);
             if (!session) {
                 console.error('❌ Game session not found');
                 socket.emit('error', { message: 'Game session not found' });
@@ -25,14 +25,18 @@ const handleTicTacToe = (socket, io, activeGames) => {
                 socket.emit('error', { message: 'Not your turn' });
                 return;
             }
-            // Initialize or get existing board
-            if (!session.gameState.board) {
-                session.gameState = { board: Array(9).fill(null) };
+            // Initialize board if it doesn't exist
+            let currentBoard;
+            if (!session.gameState || !session.gameState.board) {
+                currentBoard = Array(9).fill(null);
             }
-            const board = session.gameState.board;
-            console.log('📊 Current board state:', board);
+            else {
+                // Create a proper copy of the board
+                currentBoard = JSON.parse(JSON.stringify(session.gameState.board));
+            }
+            console.log('📊 Current board state:', currentBoard);
             // Check if position is already taken
-            if (board[position] !== null) {
+            if (currentBoard[position] !== null && currentBoard[position] !== undefined) {
                 console.error('❌ Position already taken');
                 socket.emit('error', { message: 'Invalid move - position already taken' });
                 return;
@@ -41,23 +45,32 @@ const handleTicTacToe = (socket, io, activeGames) => {
             const isPlayer1 = session.players.player1.toString() === userId;
             const symbol = isPlayer1 ? 'X' : 'O';
             console.log(`✅ Player ${isPlayer1 ? '1' : '2'} (${symbol}) making move at position ${position}`);
-            // Update the board - IMPORTANT: Modify the existing board array
-            board[position] = symbol;
-            console.log('📊 Updated board state:', board);
-            // Add move to history
-            session.moves.push({
-                playerId: new mongoose_1.default.Types.ObjectId(userId),
-                move: { position, symbol },
-                timestamp: new Date(),
-            });
+            // Update the board
+            currentBoard[position] = symbol;
+            console.log('📊 Updated board state:', currentBoard);
             // Check for winner
-            const winner = checkTicTacToeWinner(board);
+            const winner = checkTicTacToeWinner(currentBoard);
             console.log('🏆 Winner check result:', winner);
+            // Prepare update object
+            const updateObj = {
+                $set: {
+                    'gameState.board': currentBoard
+                },
+                $push: {
+                    moves: {
+                        playerId: new mongoose_1.default.Types.ObjectId(userId),
+                        move: { position, symbol },
+                        timestamp: new Date(),
+                    }
+                }
+            };
+            // Handle game end or turn switch
             if (winner) {
-                session.status = 'finished';
-                session.finishedAt = new Date();
+                updateObj.$set.status = 'finished';
+                updateObj.$set.finishedAt = new Date();
                 if (winner === 'TIE') {
-                    session.isDraw = true;
+                    updateObj.$set.isDraw = true;
+                    updateObj.$set['gameState.winner'] = 'TIE';
                     // Update stats for both players
                     await User_1.default.findByIdAndUpdate(session.players.player1, {
                         $inc: {
@@ -77,7 +90,8 @@ const handleTicTacToe = (socket, io, activeGames) => {
                 else {
                     const winnerId = winner === 'X' ? session.players.player1 : session.players.player2;
                     const loserId = winner === 'X' ? session.players.player2 : session.players.player1;
-                    session.winner = winnerId;
+                    updateObj.$set.winner = winnerId;
+                    updateObj.$set['gameState.winner'] = winner;
                     // Update winner stats
                     await User_1.default.findByIdAndUpdate(winnerId, {
                         $inc: {
@@ -95,30 +109,34 @@ const handleTicTacToe = (socket, io, activeGames) => {
                         }
                     });
                 }
-                session.gameState.winner = winner;
             }
             else {
                 // Switch turn
-                session.currentTurn = isPlayer1 ? session.players.player2 : session.players.player1;
+                updateObj.$set.currentTurn = isPlayer1 ? session.players.player2 : session.players.player1;
             }
-            // Save the session with updated board
-            await session.save();
-            console.log('💾 Session saved with board:', session.gameState.board);
-            // Broadcast move to room - send the COMPLETE board state
+            // CRITICAL: Use findByIdAndUpdate with $set to directly update MongoDB
+            const updatedSession = await GameSession_1.default.findByIdAndUpdate(sessionId, updateObj, { new: true } // Return the updated document
+            );
+            if (!updatedSession) {
+                throw new Error('Failed to update session');
+            }
+            console.log('💾 Session updated successfully');
+            console.log('💾 Final board in database:', updatedSession.gameState.board);
+            // Broadcast move to room
             const moveData = {
                 position,
                 symbol,
-                board: session.gameState.board, // Send complete board
-                currentTurn: session.currentTurn?.toString(),
-                winner: session.gameState.winner,
-                gameOver: session.status === 'finished',
+                board: updatedSession.gameState.board,
+                currentTurn: updatedSession.currentTurn?.toString(),
+                winner: updatedSession.gameState?.winner,
+                gameOver: updatedSession.status === 'finished',
             };
-            console.log('📤 Broadcasting move to room:', roomId);
-            console.log('📦 Move data:', moveData);
+            console.log('📤 Broadcasting to room:', roomId);
+            console.log('📦 Board being sent:', moveData.board);
             io.to(roomId).emit('tic-tac-toe:move-made', moveData);
             // Clean up active games if finished
-            if (session.status === 'finished') {
-                console.log('🏁 Game finished, cleaning up active games');
+            if (updatedSession.status === 'finished') {
+                console.log('🏁 Game finished, cleaning up');
                 activeGames.delete(session.players.player1.toString());
                 if (session.players.player2) {
                     activeGames.delete(session.players.player2.toString());
@@ -145,8 +163,8 @@ function checkTicTacToeWinner(board) {
             return board[a];
         }
     }
-    // Check for tie - all positions filled
-    if (board.every((cell) => cell !== null)) {
+    // Check for tie
+    if (board.every((cell) => cell !== null && cell !== undefined)) {
         return 'TIE';
     }
     return null;
