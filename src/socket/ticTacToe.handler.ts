@@ -1,6 +1,5 @@
 // ============================================
-// FIXED: src/socket/ticTacToe.handler.ts
-// Properly maintains board state across moves
+// src/socket/ticTacToe.handler.ts
 // ============================================
 import { Server, Socket } from 'socket.io';
 import mongoose from 'mongoose';
