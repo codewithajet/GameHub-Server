@@ -77,10 +77,17 @@ const handleTicTacToe = (socket, io, activeGames) => {
             }
             console.log('🔍 Current turn:', session.currentTurn?.toString());
             console.log('🔍 Player making move:', userId);
+            console.log('🔍 Session status:', session.status);
             // Verify it's player's turn
             if (session.currentTurn?.toString() !== userId) {
                 console.error('❌ Not player\'s turn');
                 socket.emit('error', { message: 'Not your turn' });
+                return;
+            }
+            // Don't allow moves if game is already finished
+            if (session.status === 'finished') {
+                console.error('❌ Game already finished');
+                socket.emit('error', { message: 'Game already finished' });
                 return;
             }
             // Initialize board if it doesn't exist
@@ -190,6 +197,7 @@ const handleTicTacToe = (socket, io, activeGames) => {
             }
             console.log('💾 Session updated successfully');
             console.log('💾 Final board in database:', updatedSession.gameState.board);
+            console.log('💾 Session status:', updatedSession.status);
             console.log('👤 Next turn:', updatedSession.currentTurn?.toString());
             // Broadcast move to room
             const moveData = {
