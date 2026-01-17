@@ -37,7 +37,7 @@ const handleTicTacToe = (socket, io, activeGames) => {
                     'gameState.board': Array(9).fill(null),
                     'gameState.winner': null,
                     'status': 'active',
-                    'currentTurn': session.players.player1, // Player 1 (X) always starts
+                    'currentTurn': session.players.player1,
                     'isDraw': false,
                     'finishedAt': null
                 }
@@ -77,17 +77,17 @@ const handleTicTacToe = (socket, io, activeGames) => {
             }
             console.log('🔍 Current turn:', session.currentTurn?.toString());
             console.log('🔍 Player making move:', userId);
-            console.log('🔍 Session status:', session.status);
+            console.log('🔍 Game status:', session.status);
+            // CRITICAL: Check if game is already finished to prevent double scoring
+            if (session.status === 'finished') {
+                console.error('❌ Game already finished, ignoring move');
+                socket.emit('error', { message: 'Game already finished' });
+                return;
+            }
             // Verify it's player's turn
             if (session.currentTurn?.toString() !== userId) {
                 console.error('❌ Not player\'s turn');
                 socket.emit('error', { message: 'Not your turn' });
-                return;
-            }
-            // Don't allow moves if game is already finished
-            if (session.status === 'finished') {
-                console.error('❌ Game already finished');
-                socket.emit('error', { message: 'Game already finished' });
                 return;
             }
             // Initialize board if it doesn't exist
@@ -96,7 +96,6 @@ const handleTicTacToe = (socket, io, activeGames) => {
                 currentBoard = Array(9).fill(null);
             }
             else {
-                // Create a proper copy of the board
                 currentBoard = JSON.parse(JSON.stringify(session.gameState.board));
             }
             console.log('📊 Current board state:', currentBoard);
@@ -132,13 +131,14 @@ const handleTicTacToe = (socket, io, activeGames) => {
             };
             // Handle game end or turn switch
             if (winner) {
+                console.log('🏁 Game is ending with winner:', winner);
                 updateObj.$set.status = 'finished';
                 updateObj.$set.finishedAt = new Date();
                 if (winner === 'TIE') {
                     updateObj.$set.isDraw = true;
                     updateObj.$set['gameState.winner'] = 'TIE';
-                    console.log('📊 Game ended in TIE - updating stats');
-                    // Update stats for both players - TIE
+                    console.log('📊 Game ended in TIE - updating stats ONCE');
+                    // FIXED: Update stats for both players - TIE (happens once per game)
                     await User_1.default.findByIdAndUpdate(session.players.player1, {
                         $inc: {
                             'stats.gamesPlayed': 1,
@@ -161,7 +161,7 @@ const handleTicTacToe = (socket, io, activeGames) => {
                     updateObj.$set.winner = winnerId;
                     updateObj.$set['gameState.winner'] = winner;
                     console.log(`📊 Game won by ${winner} - Winner ID: ${winnerId}`);
-                    // Update winner stats
+                    // FIXED: Update winner stats ONCE
                     await User_1.default.findByIdAndUpdate(winnerId, {
                         $inc: {
                             'stats.gamesPlayed': 1,
@@ -170,7 +170,7 @@ const handleTicTacToe = (socket, io, activeGames) => {
                         }
                     });
                     console.log('✅ Updated winner stats');
-                    // Update loser stats
+                    // FIXED: Update loser stats ONCE
                     await User_1.default.findByIdAndUpdate(loserId, {
                         $inc: {
                             'stats.gamesPlayed': 1,
@@ -182,7 +182,7 @@ const handleTicTacToe = (socket, io, activeGames) => {
                 }
             }
             else {
-                // Switch turn
+                // Switch turn only if game not finished
                 const nextTurn = isPlayer1 ? session.players.player2 : session.players.player1;
                 if (nextTurn) {
                     updateObj.$set.currentTurn = nextTurn;
@@ -190,14 +190,13 @@ const handleTicTacToe = (socket, io, activeGames) => {
                 }
             }
             // CRITICAL: Use findByIdAndUpdate with $set to directly update MongoDB
-            const updatedSession = await GameSession_1.default.findByIdAndUpdate(sessionId, updateObj, { new: true } // Return the updated document
-            );
+            const updatedSession = await GameSession_1.default.findByIdAndUpdate(sessionId, updateObj, { new: true });
             if (!updatedSession) {
                 throw new Error('Failed to update session');
             }
             console.log('💾 Session updated successfully');
             console.log('💾 Final board in database:', updatedSession.gameState.board);
-            console.log('💾 Session status:', updatedSession.status);
+            console.log('💾 Game status:', updatedSession.status);
             console.log('👤 Next turn:', updatedSession.currentTurn?.toString());
             // Broadcast move to room
             const moveData = {
@@ -210,10 +209,11 @@ const handleTicTacToe = (socket, io, activeGames) => {
             };
             console.log('📤 Broadcasting to room:', roomId);
             console.log('📦 Move data being sent:', moveData);
+            // CRITICAL: Broadcast to room (both players will receive this)
             io.to(roomId).emit('tic-tac-toe:move-made', moveData);
             // Clean up active games if finished
             if (updatedSession.status === 'finished') {
-                console.log('🏁 Game finished, cleaning up');
+                console.log('🏁 Game finished, cleaning up active games map');
                 activeGames.delete(session.players.player1.toString());
                 if (session.players.player2) {
                     activeGames.delete(session.players.player2.toString());
