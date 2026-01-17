@@ -1,6 +1,6 @@
 // ============================================
-// FINAL FIX: src/socket/ticTacToe.handler.ts
-// Uses direct MongoDB update with $set operator
+// FIXED: src/socket/ticTacToe.handler.ts
+// Added proper game reset handling
 // ============================================
 import { Server, Socket } from 'socket.io';
 import mongoose from 'mongoose';
@@ -12,6 +12,80 @@ export const handleTicTacToe = (
   io: Server,
   activeGames: Map<string, string>
 ) => {
+  
+  // Handle game reset
+  socket.on('tic-tac-toe:reset', async (data) => {
+    const { roomId, sessionId } = data;
+    const userId = socket.data.userId;
+
+    try {
+      console.log(`\n🔄 Tic-Tac-Toe reset requested by ${userId}`);
+      
+      const session = await GameSession.findById(sessionId);
+      
+      if (!session) {
+        console.error('❌ Game session not found');
+        socket.emit('error', { message: 'Game session not found' });
+        return;
+      }
+
+      // Verify user is part of this game
+      const isPlayer1 = session.players.player1.toString() === userId;
+      const isPlayer2 = session.players.player2?.toString() === userId;
+      
+      if (!isPlayer1 && !isPlayer2) {
+        console.error('❌ User not part of this game');
+        socket.emit('error', { message: 'Not authorized' });
+        return;
+      }
+
+      // Reset the game state
+      const resetUpdate = {
+        $set: {
+          'gameState.board': Array(9).fill(null),
+          'gameState.winner': null,
+          'status': 'active',
+          'currentTurn': session.players.player1, // Player 1 (X) always starts
+          'isDraw': false,
+          'finishedAt': null
+        },
+        $push: {
+          moves: {
+            playerId: new mongoose.Types.ObjectId(userId),
+            move: { type: 'reset' },
+            timestamp: new Date(),
+          }
+        }
+      };
+
+      const updatedSession = await GameSession.findByIdAndUpdate(
+        sessionId,
+        resetUpdate,
+        { new: true }
+      );
+
+      if (!updatedSession) {
+        throw new Error('Failed to reset session');
+      }
+
+      console.log('✅ Game reset successfully');
+      console.log('📊 Reset board:', updatedSession.gameState.board);
+
+      // Broadcast reset to room
+      io.to(roomId).emit('tic-tac-toe:reset', {
+        board: updatedSession.gameState.board,
+        currentTurn: updatedSession.currentTurn?.toString(),
+        sessionId: sessionId
+      });
+
+      console.log('📤 Reset broadcast to room:', roomId);
+      
+    } catch (error) {
+      console.error('❌ Tic-Tac-Toe reset error:', error);
+      socket.emit('error', { message: 'Error resetting game' });
+    }
+  });
+
   socket.on('tic-tac-toe:move', async (data) => {
     const { roomId, position, sessionId } = data;
     const userId = socket.data.userId;
