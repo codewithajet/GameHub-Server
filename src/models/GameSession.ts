@@ -1,14 +1,15 @@
 // ============================================
-// FILE: src/models/GameSession.ts
+// FILE: src/models/GameSession.ts - FIXED with roomId
 // ============================================
 import mongoose, { Schema, Document } from 'mongoose';
 
 export type GameType = 'tic-tac-toe' | 'chess' | 'checkers';
-export type GameStatus = 'waiting' | 'playing' | 'finished' | 'abandoned';
+export type GameStatus = 'waiting' | 'active' | 'finished' | 'abandoned';
 
 export interface IGameSession extends Document {
   gameType: GameType;
   status: GameStatus;
+  roomId?: string; // ADDED: Room ID for socket.io room management
   players: {
     player1: mongoose.Types.ObjectId;
     player2?: mongoose.Types.ObjectId;
@@ -37,8 +38,12 @@ const GameSessionSchema = new Schema<IGameSession>(
     },
     status: {
       type: String,
-      enum: ['waiting', 'playing', 'finished', 'abandoned'],
+      enum: ['waiting', 'active', 'finished', 'abandoned'],
       default: 'waiting',
+    },
+    roomId: {
+      type: String,
+      // Room ID for socket.io - generated when match is found
     },
     players: {
       player1: {
@@ -89,8 +94,11 @@ const GameSessionSchema = new Schema<IGameSession>(
   }
 );
 
-// Index for faster queries
+// Indexes for faster queries
 GameSessionSchema.index({ status: 1, gameType: 1 });
 GameSessionSchema.index({ 'players.player1': 1, 'players.player2': 1 });
+GameSessionSchema.index({ roomId: 1 });
+GameSessionSchema.index({ status: 1, 'players.player1': 1 });
+GameSessionSchema.index({ status: 1, 'players.player2': 1 });
 
 export default mongoose.model<IGameSession>('GameSession', GameSessionSchema);

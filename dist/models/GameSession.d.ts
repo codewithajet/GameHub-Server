@@ -1,9 +1,10 @@
 import mongoose, { Document } from 'mongoose';
 export type GameType = 'tic-tac-toe' | 'chess' | 'checkers';
-export type GameStatus = 'waiting' | 'playing' | 'finished' | 'abandoned';
+export type GameStatus = 'waiting' | 'active' | 'finished' | 'abandoned';
 export interface IGameSession extends Document {
     gameType: GameType;
     status: GameStatus;
+    roomId?: string;
     players: {
         player1: mongoose.Types.ObjectId;
         player2?: mongoose.Types.ObjectId;

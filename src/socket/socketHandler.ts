@@ -1,6 +1,5 @@
 // ============================================
-// FULLY FIXED: src/socket/socketHandler.ts
-// Players will now connect immediately when both searching
+// FILE: src/socket/socketHandler.ts - FIXED with roomId
 // ============================================
 import { Server, Socket } from 'socket.io';
 import mongoose from 'mongoose';
@@ -29,7 +28,6 @@ const connectedUsers = new Map<string, SocketUser>();
 const waitingQueue = new Map<string, WaitingPlayer[]>();
 const activeGames = new Map<string, string>();
 
-// Broadcast queue updates to all connected clients
 function broadcastQueueUpdate(io: Server, gameType: string) {
   const queue = waitingQueue.get(gameType) || [];
   console.log(`📢 Broadcasting queue update for ${gameType}: ${queue.length} players`);
@@ -99,13 +97,12 @@ export function initializeSocket(io: Server) {
     });
 
     // ===================================
-    // MATCHMAKING - COMPLETELY FIXED
+    // MATCHMAKING - FIXED WITH ROOMID
     // ===================================
     socket.on('find-match', async ({ gameType }) => {
       console.log(`\n🔍 ${username} (${userId}) is searching for ${gameType}...`);
-      console.log(`   Socket ID: ${socket.id}`);
 
-      // STEP 1: Clean up any previous game/queue for this user
+      // Clean up previous game/queue
       const oldRoomId = activeGames.get(userId);
       if (oldRoomId) {
         console.log(`   🧹 Cleaning up old game room: ${oldRoomId}`);
@@ -116,7 +113,7 @@ export function initializeSocket(io: Server) {
         socket.leave(oldRoomId);
       }
 
-      // Remove from ALL queues
+      // Remove from all queues
       waitingQueue.forEach((queue, gt) => {
         const index = queue.findIndex((p) => p.userId === userId);
         if (index !== -1) {
@@ -125,16 +122,15 @@ export function initializeSocket(io: Server) {
         }
       });
 
-      // STEP 2: Initialize queue for this game type
+      // Initialize queue
       if (!waitingQueue.has(gameType)) {
         waitingQueue.set(gameType, []);
       }
 
       const queue = waitingQueue.get(gameType)!;
       console.log(`   📊 Current queue size: ${queue.length}`);
-      console.log(`   📊 Queue players:`, queue.map(p => `${p.username} (${p.userId.substring(0, 8)}...)`));
 
-      // STEP 3: Look for an opponent (anyone who is NOT this user)
+      // Look for opponent
       let opponentIndex = -1;
       for (let i = 0; i < queue.length; i++) {
         if (queue[i].userId !== userId) {
@@ -144,7 +140,7 @@ export function initializeSocket(io: Server) {
       }
 
       if (opponentIndex !== -1) {
-        // MATCH FOUND!
+        // MATCH FOUND
         const opponent = queue[opponentIndex];
         
         console.log(`\n🎮 MATCH FOUND!`);
@@ -153,7 +149,6 @@ export function initializeSocket(io: Server) {
 
         // Remove opponent from queue
         queue.splice(opponentIndex, 1);
-        console.log(`   ✅ Removed opponent from queue. New size: ${queue.length}`);
 
         // Create unique room ID
         const roomId = `${gameType}-${Date.now()}-${Math.random().toString(36).substring(7)}`;
@@ -164,10 +159,6 @@ export function initializeSocket(io: Server) {
         
         if (!opponentSocket) {
           console.error(`   ❌ ERROR: Cannot find opponent socket!`);
-          console.error(`      Opponent socket ID: ${opponent.socketId}`);
-          console.error(`      Available sockets:`, Array.from(io.sockets.sockets.keys()));
-          
-          // Put current player in queue
           queue.push({ 
             userId, 
             socketId: socket.id, 
@@ -186,21 +177,20 @@ export function initializeSocket(io: Server) {
           return;
         }
 
-        // Join both sockets to the room
+        // Join both sockets to room
         socket.join(roomId);
         opponentSocket.join(roomId);
-        console.log(`   ✅ Both players joined room ${roomId}`);
 
         // Mark both as in active game
         activeGames.set(userId, roomId);
         activeGames.set(opponent.userId, roomId);
-        console.log(`   ✅ Both players marked as in active game`);
 
         try {
-          // Create game session in database
+          // FIXED: Create game session with roomId
           const gameSession = await GameSession.create({
             gameType,
-            status: 'playing',
+            status: 'active', // FIXED: Changed from 'playing' to 'active'
+            roomId: roomId,   // FIXED: Added roomId field
             players: {
               player1: new mongoose.Types.ObjectId(userId),
               player2: new mongoose.Types.ObjectId(opponent.userId),
@@ -210,6 +200,7 @@ export function initializeSocket(io: Server) {
           });
 
           console.log(`   ✅ Game session created: ${gameSession._id}`);
+          console.log(`   ✅ Room ID saved: ${gameSession.roomId}`);
 
           // Prepare match data
           const matchData = {
@@ -225,13 +216,12 @@ export function initializeSocket(io: Server) {
 
           console.log(`   📤 Sending match-found to both players...`);
           
-          // Send to BOTH players individually to ensure delivery
+          // Send to BOTH players
           socket.emit('match-found', matchData);
           opponentSocket.emit('match-found', matchData);
           
           console.log(`   ✅ MATCH CREATED SUCCESSFULLY!\n`);
           
-          // Update queue for everyone
           broadcastQueueUpdate(io, gameType);
           
         } catch (error) {
@@ -259,7 +249,7 @@ export function initializeSocket(io: Server) {
           broadcastQueueUpdate(io, gameType);
         }
       } else {
-        // No opponent found, add to queue
+        // No opponent, add to queue
         const newPlayer = { 
           userId, 
           socketId: socket.id, 
@@ -272,7 +262,6 @@ export function initializeSocket(io: Server) {
         
         console.log(`   ⏳ No opponent available. Added to queue.`);
         console.log(`   📊 New queue size: ${queue.length}`);
-        console.log(`   📊 Queue now contains:`, queue.map(p => `${p.username} (${p.userId.substring(0, 8)}...)`));
         
         socket.emit('searching', { 
           message: 'Searching for opponent...',
@@ -281,11 +270,10 @@ export function initializeSocket(io: Server) {
         });
         
         broadcastQueueUpdate(io, gameType);
-        console.log(`   ✅ Search status sent to player\n`);
       }
     });
 
-    // Cancel matchmaking
+    // Cancel search
     socket.on('cancel-search', ({ gameType }) => {
       console.log(`\n❌ ${username} cancelling search for ${gameType}`);
       const queue = waitingQueue.get(gameType);
@@ -296,13 +284,11 @@ export function initializeSocket(io: Server) {
           console.log(`   ✅ Removed from queue. New size: ${queue.length}`);
           socket.emit('search-cancelled', { message: 'Search cancelled' });
           broadcastQueueUpdate(io, gameType);
-        } else {
-          console.log(`   ⚠️ Player not found in queue`);
         }
       }
     });
 
-    // Get current queue status
+    // Get queue status
     socket.on('get-queue-status', ({ gameType }) => {
       const queue = waitingQueue.get(gameType) || [];
       socket.emit('queue-update', {
@@ -395,6 +381,5 @@ export function initializeSocket(io: Server) {
     });
   });
 
-  // Log server info
   console.log('\n🚀 Socket.IO server initialized and ready for connections\n');
 }

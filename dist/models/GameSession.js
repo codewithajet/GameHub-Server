@@ -34,7 +34,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 // ============================================
-// FILE: src/models/GameSession.ts
+// FILE: src/models/GameSession.ts - FIXED with roomId
 // ============================================
 const mongoose_1 = __importStar(require("mongoose"));
 const GameSessionSchema = new mongoose_1.Schema({
@@ -45,8 +45,12 @@ const GameSessionSchema = new mongoose_1.Schema({
     },
     status: {
         type: String,
-        enum: ['waiting', 'playing', 'finished', 'abandoned'],
+        enum: ['waiting', 'active', 'finished', 'abandoned'],
         default: 'waiting',
+    },
+    roomId: {
+        type: String,
+        // Room ID for socket.io - generated when match is found
     },
     players: {
         player1: {
@@ -94,8 +98,11 @@ const GameSessionSchema = new mongoose_1.Schema({
 }, {
     timestamps: true,
 });
-// Index for faster queries
+// Indexes for faster queries
 GameSessionSchema.index({ status: 1, gameType: 1 });
 GameSessionSchema.index({ 'players.player1': 1, 'players.player2': 1 });
+GameSessionSchema.index({ roomId: 1 });
+GameSessionSchema.index({ status: 1, 'players.player1': 1 });
+GameSessionSchema.index({ status: 1, 'players.player2': 1 });
 exports.default = mongoose_1.default.model('GameSession', GameSessionSchema);
 //# sourceMappingURL=GameSession.js.map
