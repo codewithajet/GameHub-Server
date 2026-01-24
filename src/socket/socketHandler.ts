@@ -1,11 +1,14 @@
 // ============================================
-// FILE: src/socket/socketHandler.ts - COMPLETE WORKING VERSION
+// FILE: src/socket/socketHandler.ts - FIXED (Uses Separate Handlers)
 // ============================================
 import { Server, Socket } from 'socket.io';
 import mongoose from 'mongoose';
 import { verifyToken } from '../utils/jwt.utils';
 import User from '../models/User';
 import GameSession from '../models/GameSession';
+import { handleTicTacToe } from './ticTacToe.handler';
+import { handleChess } from './chess.handler';
+import { handleCheckers } from './checkers.handler';
 
 interface SocketUser {
   userId: string;
@@ -177,6 +180,7 @@ export function initializeSocket(io: Server) {
           });
 
           console.log(`   ✅ Session: ${gameSession._id}`);
+          console.log(`   ✅ Room ID saved: ${gameSession.roomId}`);
 
           const matchData = {
             roomId,
@@ -239,279 +243,11 @@ export function initializeSocket(io: Server) {
     });
 
     // ===================================
-    // TIC-TAC-TOE HANDLER
+    // GAME HANDLERS (Separate Files)
     // ===================================
-    socket.on('tic-tac-toe:move', async (data) => {
-      const { roomId, position, sessionId } = data;
-      
-      try {
-        console.log(`🎯 Tic-Tac-Toe move: position ${position}`);
-
-        const session = await GameSession.findById(sessionId);
-        if (!session) {
-          socket.emit('error', { message: 'Session not found' });
-          return;
-        }
-
-        if (session.currentTurn?.toString() !== userId) {
-          socket.emit('error', { message: 'Not your turn' });
-          return;
-        }
-
-        const isPlayer1 = session.players.player1.toString() === userId;
-        const playerSymbol = isPlayer1 ? 'X' : 'O';
-
-        let board: (string | null)[] = session.gameState?.board || Array(9).fill(null);
-
-        if (board[position] !== null) {
-          socket.emit('error', { message: 'Invalid move' });
-          return;
-        }
-
-        board[position] = playerSymbol;
-
-        session.moves.push({
-          playerId: new mongoose.Types.ObjectId(userId),
-          move: { position, symbol: playerSymbol },
-          timestamp: new Date(),
-        });
-
-        const winner = checkTicTacToeWinner(board);
-        session.gameState = { board };
-
-        if (winner) {
-          session.status = 'finished';
-          session.finishedAt = new Date();
-          
-          if (winner === 'TIE') {
-            session.isDraw = true;
-            await User.findByIdAndUpdate(session.players.player1, {
-              $inc: { 'stats.gamesPlayed': 1, 'stats.gamesTied': 1, 'gameStats.tic-tac-toe.ties': 1 }
-            });
-            await User.findByIdAndUpdate(session.players.player2, {
-              $inc: { 'stats.gamesPlayed': 1, 'stats.gamesTied': 1, 'gameStats.tic-tac-toe.ties': 1 }
-            });
-          } else {
-            const winnerId = winner === 'X' ? session.players.player1 : session.players.player2;
-            const loserId = winner === 'X' ? session.players.player2 : session.players.player1;
-            session.winner = winnerId;
-            
-            await User.findByIdAndUpdate(winnerId, {
-              $inc: { 'stats.gamesPlayed': 1, 'stats.gamesWon': 1, 'gameStats.tic-tac-toe.wins': 1 }
-            });
-            await User.findByIdAndUpdate(loserId, {
-              $inc: { 'stats.gamesPlayed': 1, 'stats.gamesLost': 1, 'gameStats.tic-tac-toe.losses': 1 }
-            });
-          }
-        } else {
-          session.currentTurn = isPlayer1 ? session.players.player2 : session.players.player1;
-        }
-
-        await session.save();
-
-        io.to(roomId).emit('tic-tac-toe:move-made', {
-          board: session.gameState.board,
-          position,
-          currentTurn: session.currentTurn?.toString(),
-          winner: winner || null,
-          gameOver: session.status === 'finished',
-        });
-
-        if (session.status === 'finished') {
-          activeGames.delete(session.players.player1.toString());
-          if (session.players.player2) {
-            activeGames.delete(session.players.player2.toString());
-          }
-        }
-      } catch (error) {
-        console.error('❌ Tic-Tac-Toe error:', error);
-        socket.emit('error', { message: 'Error processing move' });
-      }
-    });
-
-    socket.on('tic-tac-toe:reset', async (data) => {
-      const { roomId, sessionId } = data;
-      
-      try {
-        const session = await GameSession.findById(sessionId);
-        if (!session) return;
-
-        session.gameState = { board: Array(9).fill(null) };
-        session.status = 'active';
-        session.currentTurn = session.players.player1;
-        session.winner = undefined;
-        session.isDraw = false;
-        session.moves = [];
-        session.finishedAt = undefined;
-
-        await session.save();
-
-        io.to(roomId).emit('tic-tac-toe:reset', {
-          board: session.gameState.board,
-          currentTurn: session.currentTurn?.toString(),
-        });
-      } catch (error) {
-        console.error('❌ Reset error:', error);
-      }
-    });
-
-    // ===================================
-    // CHESS HANDLER
-    // ===================================
-    socket.on('chess:move', async (data) => {
-      const { roomId, from, to, sessionId, gameState, winner } = data;
-      
-      try {
-        console.log(`♟️ Chess move: ${JSON.stringify(from)} → ${JSON.stringify(to)}`);
-
-        const session = await GameSession.findById(sessionId);
-        if (!session) {
-          socket.emit('error', { message: 'Session not found' });
-          return;
-        }
-
-        if (session.currentTurn?.toString() !== userId) {
-          socket.emit('error', { message: 'Not your turn' });
-          return;
-        }
-
-        const isPlayer1 = session.players.player1.toString() === userId;
-        const playerColor = isPlayer1 ? 'white' : 'black';
-
-        session.moves.push({
-          playerId: new mongoose.Types.ObjectId(userId),
-          move: { from, to, color: playerColor },
-          timestamp: new Date(),
-        });
-
-        session.gameState = gameState;
-
-        if (winner) {
-          session.status = 'finished';
-          session.finishedAt = new Date();
-          
-          if (winner === 'draw') {
-            session.isDraw = true;
-            await User.findByIdAndUpdate(session.players.player1, {
-              $inc: { 'stats.gamesPlayed': 1, 'stats.gamesTied': 1, 'gameStats.chess.ties': 1 }
-            });
-            await User.findByIdAndUpdate(session.players.player2, {
-              $inc: { 'stats.gamesPlayed': 1, 'stats.gamesTied': 1, 'gameStats.chess.ties': 1 }
-            });
-          } else {
-            const winnerId = winner === 'white' ? session.players.player1 : session.players.player2;
-            const loserId = winner === 'white' ? session.players.player2 : session.players.player1;
-            session.winner = winnerId;
-            
-            await User.findByIdAndUpdate(winnerId, {
-              $inc: { 'stats.gamesPlayed': 1, 'stats.gamesWon': 1, 'gameStats.chess.wins': 1 }
-            });
-            await User.findByIdAndUpdate(loserId, {
-              $inc: { 'stats.gamesPlayed': 1, 'stats.gamesLost': 1, 'gameStats.chess.losses': 1 }
-            });
-          }
-        } else {
-          session.currentTurn = isPlayer1 ? session.players.player2 : session.players.player1;
-        }
-
-        await session.save();
-
-        io.to(roomId).emit('chess:move-made', {
-          from,
-          to,
-          gameState: session.gameState,
-          currentTurn: session.currentTurn?.toString(),
-          winner: winner || null,
-          gameOver: session.status === 'finished',
-        });
-
-        if (session.status === 'finished') {
-          activeGames.delete(session.players.player1.toString());
-          if (session.players.player2) {
-            activeGames.delete(session.players.player2.toString());
-          }
-        }
-      } catch (error) {
-        console.error('❌ Chess error:', error);
-        socket.emit('error', { message: 'Error processing move' });
-      }
-    });
-
-    // ===================================
-    // CHECKERS HANDLER
-    // ===================================
-    socket.on('checkers:move', async (data) => {
-      const { roomId, from, to, sessionId, gameState, captured, mustContinue, winner } = data;
-      
-      try {
-        console.log(`🎯 Checkers move: ${JSON.stringify(from)} → ${JSON.stringify(to)}`);
-
-        const session = await GameSession.findById(sessionId);
-        if (!session) {
-          socket.emit('error', { message: 'Session not found' });
-          return;
-        }
-
-        if (session.currentTurn?.toString() !== userId) {
-          socket.emit('error', { message: 'Not your turn' });
-          return;
-        }
-
-        const isPlayer1 = session.players.player1.toString() === userId;
-        const playerColor = isPlayer1 ? 'red' : 'black';
-
-        session.moves.push({
-          playerId: new mongoose.Types.ObjectId(userId),
-          move: { from, to, color: playerColor, captured },
-          timestamp: new Date(),
-        });
-
-        session.gameState = gameState;
-
-        if (winner) {
-          session.status = 'finished';
-          session.finishedAt = new Date();
-          
-          const winnerId = winner === 'red' ? session.players.player1 : session.players.player2;
-          const loserId = winner === 'red' ? session.players.player2 : session.players.player1;
-          session.winner = winnerId;
-          
-          await User.findByIdAndUpdate(winnerId, {
-            $inc: { 'stats.gamesPlayed': 1, 'stats.gamesWon': 1, 'gameStats.checkers.wins': 1 }
-          });
-          await User.findByIdAndUpdate(loserId, {
-            $inc: { 'stats.gamesPlayed': 1, 'stats.gamesLost': 1, 'gameStats.checkers.losses': 1 }
-          });
-        } else {
-          if (!mustContinue) {
-            session.currentTurn = isPlayer1 ? session.players.player2 : session.players.player1;
-          }
-        }
-
-        await session.save();
-
-        io.to(roomId).emit('checkers:move-made', {
-          from,
-          to,
-          gameState: session.gameState,
-          captured,
-          mustContinue,
-          currentTurn: session.currentTurn?.toString(),
-          winner: winner || null,
-          gameOver: session.status === 'finished',
-        });
-
-        if (session.status === 'finished') {
-          activeGames.delete(session.players.player1.toString());
-          if (session.players.player2) {
-            activeGames.delete(session.players.player2.toString());
-          }
-        }
-      } catch (error) {
-        console.error('❌ Checkers error:', error);
-        socket.emit('error', { message: 'Error processing move' });
-      }
-    });
+    handleTicTacToe(socket, io, activeGames);
+    handleChess(socket, io, activeGames);
+    handleCheckers(socket, io, activeGames);
 
     // ===================================
     // LEAVE GAME
@@ -547,6 +283,7 @@ export function initializeSocket(io: Server) {
 
       connectedUsers.delete(userId);
 
+      // Remove from queues
       waitingQueue.forEach((queue, gameType) => {
         const index = queue.findIndex((p) => p.userId === userId);
         if (index !== -1) {
@@ -555,6 +292,7 @@ export function initializeSocket(io: Server) {
         }
       });
 
+      // Handle active game
       const roomId = activeGames.get(userId);
       if (roomId) {
         socket.to(roomId).emit('opponent-disconnected', {
@@ -618,26 +356,4 @@ export function initializeSocket(io: Server) {
   });
 
   console.log('\n🚀 Socket.IO server initialized\n');
-}
-
-// Helper function for tic-tac-toe winner check
-function checkTicTacToeWinner(board: (string | null)[]): 'X' | 'O' | 'TIE' | null {
-  const winningCombos = [
-    [0, 1, 2], [3, 4, 5], [6, 7, 8],
-    [0, 3, 6], [1, 4, 7], [2, 5, 8],
-    [0, 4, 8], [2, 4, 6],
-  ];
-
-  for (const combo of winningCombos) {
-    const [a, b, c] = combo;
-    if (board[a] && board[a] === board[b] && board[a] === board[c]) {
-      return board[a] as 'X' | 'O';
-    }
-  }
-
-  if (board.every((cell) => cell !== null)) {
-    return 'TIE';
-  }
-
-  return null;
 }

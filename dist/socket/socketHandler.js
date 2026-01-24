@@ -8,6 +8,9 @@ const mongoose_1 = __importDefault(require("mongoose"));
 const jwt_utils_1 = require("../utils/jwt.utils");
 const User_1 = __importDefault(require("../models/User"));
 const GameSession_1 = __importDefault(require("../models/GameSession"));
+const ticTacToe_handler_1 = require("./ticTacToe.handler");
+const chess_handler_1 = require("./chess.handler");
+const checkers_handler_1 = require("./checkers.handler");
 const connectedUsers = new Map();
 const waitingQueue = new Map();
 const activeGames = new Map();
@@ -137,6 +140,7 @@ function initializeSocket(io) {
                         startedAt: new Date(),
                     });
                     console.log(`   ✅ Session: ${gameSession._id}`);
+                    console.log(`   ✅ Room ID saved: ${gameSession.roomId}`);
                     const matchData = {
                         roomId,
                         gameType,
@@ -191,243 +195,11 @@ function initializeSocket(io) {
             socket.emit('queue-update', { gameType, playersWaiting: queue.length });
         });
         // ===================================
-        // TIC-TAC-TOE HANDLER
+        // GAME HANDLERS (Separate Files)
         // ===================================
-        socket.on('tic-tac-toe:move', async (data) => {
-            const { roomId, position, sessionId } = data;
-            try {
-                console.log(`🎯 Tic-Tac-Toe move: position ${position}`);
-                const session = await GameSession_1.default.findById(sessionId);
-                if (!session) {
-                    socket.emit('error', { message: 'Session not found' });
-                    return;
-                }
-                if (session.currentTurn?.toString() !== userId) {
-                    socket.emit('error', { message: 'Not your turn' });
-                    return;
-                }
-                const isPlayer1 = session.players.player1.toString() === userId;
-                const playerSymbol = isPlayer1 ? 'X' : 'O';
-                let board = session.gameState?.board || Array(9).fill(null);
-                if (board[position] !== null) {
-                    socket.emit('error', { message: 'Invalid move' });
-                    return;
-                }
-                board[position] = playerSymbol;
-                session.moves.push({
-                    playerId: new mongoose_1.default.Types.ObjectId(userId),
-                    move: { position, symbol: playerSymbol },
-                    timestamp: new Date(),
-                });
-                const winner = checkTicTacToeWinner(board);
-                session.gameState = { board };
-                if (winner) {
-                    session.status = 'finished';
-                    session.finishedAt = new Date();
-                    if (winner === 'TIE') {
-                        session.isDraw = true;
-                        await User_1.default.findByIdAndUpdate(session.players.player1, {
-                            $inc: { 'stats.gamesPlayed': 1, 'stats.gamesTied': 1, 'gameStats.tic-tac-toe.ties': 1 }
-                        });
-                        await User_1.default.findByIdAndUpdate(session.players.player2, {
-                            $inc: { 'stats.gamesPlayed': 1, 'stats.gamesTied': 1, 'gameStats.tic-tac-toe.ties': 1 }
-                        });
-                    }
-                    else {
-                        const winnerId = winner === 'X' ? session.players.player1 : session.players.player2;
-                        const loserId = winner === 'X' ? session.players.player2 : session.players.player1;
-                        session.winner = winnerId;
-                        await User_1.default.findByIdAndUpdate(winnerId, {
-                            $inc: { 'stats.gamesPlayed': 1, 'stats.gamesWon': 1, 'gameStats.tic-tac-toe.wins': 1 }
-                        });
-                        await User_1.default.findByIdAndUpdate(loserId, {
-                            $inc: { 'stats.gamesPlayed': 1, 'stats.gamesLost': 1, 'gameStats.tic-tac-toe.losses': 1 }
-                        });
-                    }
-                }
-                else {
-                    session.currentTurn = isPlayer1 ? session.players.player2 : session.players.player1;
-                }
-                await session.save();
-                io.to(roomId).emit('tic-tac-toe:move-made', {
-                    board: session.gameState.board,
-                    position,
-                    currentTurn: session.currentTurn?.toString(),
-                    winner: winner || null,
-                    gameOver: session.status === 'finished',
-                });
-                if (session.status === 'finished') {
-                    activeGames.delete(session.players.player1.toString());
-                    if (session.players.player2) {
-                        activeGames.delete(session.players.player2.toString());
-                    }
-                }
-            }
-            catch (error) {
-                console.error('❌ Tic-Tac-Toe error:', error);
-                socket.emit('error', { message: 'Error processing move' });
-            }
-        });
-        socket.on('tic-tac-toe:reset', async (data) => {
-            const { roomId, sessionId } = data;
-            try {
-                const session = await GameSession_1.default.findById(sessionId);
-                if (!session)
-                    return;
-                session.gameState = { board: Array(9).fill(null) };
-                session.status = 'active';
-                session.currentTurn = session.players.player1;
-                session.winner = undefined;
-                session.isDraw = false;
-                session.moves = [];
-                session.finishedAt = undefined;
-                await session.save();
-                io.to(roomId).emit('tic-tac-toe:reset', {
-                    board: session.gameState.board,
-                    currentTurn: session.currentTurn?.toString(),
-                });
-            }
-            catch (error) {
-                console.error('❌ Reset error:', error);
-            }
-        });
-        // ===================================
-        // CHESS HANDLER
-        // ===================================
-        socket.on('chess:move', async (data) => {
-            const { roomId, from, to, sessionId, gameState, winner } = data;
-            try {
-                console.log(`♟️ Chess move: ${JSON.stringify(from)} → ${JSON.stringify(to)}`);
-                const session = await GameSession_1.default.findById(sessionId);
-                if (!session) {
-                    socket.emit('error', { message: 'Session not found' });
-                    return;
-                }
-                if (session.currentTurn?.toString() !== userId) {
-                    socket.emit('error', { message: 'Not your turn' });
-                    return;
-                }
-                const isPlayer1 = session.players.player1.toString() === userId;
-                const playerColor = isPlayer1 ? 'white' : 'black';
-                session.moves.push({
-                    playerId: new mongoose_1.default.Types.ObjectId(userId),
-                    move: { from, to, color: playerColor },
-                    timestamp: new Date(),
-                });
-                session.gameState = gameState;
-                if (winner) {
-                    session.status = 'finished';
-                    session.finishedAt = new Date();
-                    if (winner === 'draw') {
-                        session.isDraw = true;
-                        await User_1.default.findByIdAndUpdate(session.players.player1, {
-                            $inc: { 'stats.gamesPlayed': 1, 'stats.gamesTied': 1, 'gameStats.chess.ties': 1 }
-                        });
-                        await User_1.default.findByIdAndUpdate(session.players.player2, {
-                            $inc: { 'stats.gamesPlayed': 1, 'stats.gamesTied': 1, 'gameStats.chess.ties': 1 }
-                        });
-                    }
-                    else {
-                        const winnerId = winner === 'white' ? session.players.player1 : session.players.player2;
-                        const loserId = winner === 'white' ? session.players.player2 : session.players.player1;
-                        session.winner = winnerId;
-                        await User_1.default.findByIdAndUpdate(winnerId, {
-                            $inc: { 'stats.gamesPlayed': 1, 'stats.gamesWon': 1, 'gameStats.chess.wins': 1 }
-                        });
-                        await User_1.default.findByIdAndUpdate(loserId, {
-                            $inc: { 'stats.gamesPlayed': 1, 'stats.gamesLost': 1, 'gameStats.chess.losses': 1 }
-                        });
-                    }
-                }
-                else {
-                    session.currentTurn = isPlayer1 ? session.players.player2 : session.players.player1;
-                }
-                await session.save();
-                io.to(roomId).emit('chess:move-made', {
-                    from,
-                    to,
-                    gameState: session.gameState,
-                    currentTurn: session.currentTurn?.toString(),
-                    winner: winner || null,
-                    gameOver: session.status === 'finished',
-                });
-                if (session.status === 'finished') {
-                    activeGames.delete(session.players.player1.toString());
-                    if (session.players.player2) {
-                        activeGames.delete(session.players.player2.toString());
-                    }
-                }
-            }
-            catch (error) {
-                console.error('❌ Chess error:', error);
-                socket.emit('error', { message: 'Error processing move' });
-            }
-        });
-        // ===================================
-        // CHECKERS HANDLER
-        // ===================================
-        socket.on('checkers:move', async (data) => {
-            const { roomId, from, to, sessionId, gameState, captured, mustContinue, winner } = data;
-            try {
-                console.log(`🎯 Checkers move: ${JSON.stringify(from)} → ${JSON.stringify(to)}`);
-                const session = await GameSession_1.default.findById(sessionId);
-                if (!session) {
-                    socket.emit('error', { message: 'Session not found' });
-                    return;
-                }
-                if (session.currentTurn?.toString() !== userId) {
-                    socket.emit('error', { message: 'Not your turn' });
-                    return;
-                }
-                const isPlayer1 = session.players.player1.toString() === userId;
-                const playerColor = isPlayer1 ? 'red' : 'black';
-                session.moves.push({
-                    playerId: new mongoose_1.default.Types.ObjectId(userId),
-                    move: { from, to, color: playerColor, captured },
-                    timestamp: new Date(),
-                });
-                session.gameState = gameState;
-                if (winner) {
-                    session.status = 'finished';
-                    session.finishedAt = new Date();
-                    const winnerId = winner === 'red' ? session.players.player1 : session.players.player2;
-                    const loserId = winner === 'red' ? session.players.player2 : session.players.player1;
-                    session.winner = winnerId;
-                    await User_1.default.findByIdAndUpdate(winnerId, {
-                        $inc: { 'stats.gamesPlayed': 1, 'stats.gamesWon': 1, 'gameStats.checkers.wins': 1 }
-                    });
-                    await User_1.default.findByIdAndUpdate(loserId, {
-                        $inc: { 'stats.gamesPlayed': 1, 'stats.gamesLost': 1, 'gameStats.checkers.losses': 1 }
-                    });
-                }
-                else {
-                    if (!mustContinue) {
-                        session.currentTurn = isPlayer1 ? session.players.player2 : session.players.player1;
-                    }
-                }
-                await session.save();
-                io.to(roomId).emit('checkers:move-made', {
-                    from,
-                    to,
-                    gameState: session.gameState,
-                    captured,
-                    mustContinue,
-                    currentTurn: session.currentTurn?.toString(),
-                    winner: winner || null,
-                    gameOver: session.status === 'finished',
-                });
-                if (session.status === 'finished') {
-                    activeGames.delete(session.players.player1.toString());
-                    if (session.players.player2) {
-                        activeGames.delete(session.players.player2.toString());
-                    }
-                }
-            }
-            catch (error) {
-                console.error('❌ Checkers error:', error);
-                socket.emit('error', { message: 'Error processing move' });
-            }
-        });
+        (0, ticTacToe_handler_1.handleTicTacToe)(socket, io, activeGames);
+        (0, chess_handler_1.handleChess)(socket, io, activeGames);
+        (0, checkers_handler_1.handleCheckers)(socket, io, activeGames);
         // ===================================
         // LEAVE GAME
         // ===================================
@@ -455,6 +227,7 @@ function initializeSocket(io) {
         socket.on('disconnect', async (reason) => {
             console.log(`\n❌ ${username} disconnected: ${reason}`);
             connectedUsers.delete(userId);
+            // Remove from queues
             waitingQueue.forEach((queue, gameType) => {
                 const index = queue.findIndex((p) => p.userId === userId);
                 if (index !== -1) {
@@ -462,6 +235,7 @@ function initializeSocket(io) {
                     broadcastQueueUpdate(io, gameType);
                 }
             });
+            // Handle active game
             const roomId = activeGames.get(userId);
             if (roomId) {
                 socket.to(roomId).emit('opponent-disconnected', {
@@ -518,23 +292,5 @@ function initializeSocket(io) {
         });
     });
     console.log('\n🚀 Socket.IO server initialized\n');
-}
-// Helper function for tic-tac-toe winner check
-function checkTicTacToeWinner(board) {
-    const winningCombos = [
-        [0, 1, 2], [3, 4, 5], [6, 7, 8],
-        [0, 3, 6], [1, 4, 7], [2, 5, 8],
-        [0, 4, 8], [2, 4, 6],
-    ];
-    for (const combo of winningCombos) {
-        const [a, b, c] = combo;
-        if (board[a] && board[a] === board[b] && board[a] === board[c]) {
-            return board[a];
-        }
-    }
-    if (board.every((cell) => cell !== null)) {
-        return 'TIE';
-    }
-    return null;
 }
 //# sourceMappingURL=socketHandler.js.map
