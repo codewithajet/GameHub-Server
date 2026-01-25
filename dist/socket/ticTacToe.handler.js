@@ -32,15 +32,20 @@ const handleTicTacToe = (socket, io, activeGames) => {
                 return;
             }
             const playerSymbol = isPlayer1 ? 'X' : 'O';
-            // Get current board state
-            let board = session.gameState?.board || Array(9).fill(null);
-            // Validate move
+            // CRITICAL FIX: Get current board state from session
+            let board = Array.isArray(session.gameState?.board)
+                ? [...session.gameState.board]
+                : Array(9).fill(null);
+            console.log('📋 Current board before move:', board);
+            // Validate move - check if position is already occupied
             if (board[position] !== null) {
+                console.log(`❌ Position ${position} already taken with ${board[position]}`);
                 socket.emit('error', { message: 'Invalid move: position already taken' });
                 return;
             }
-            // Make the move
+            // CRITICAL FIX: Make the move on the existing board
             board[position] = playerSymbol;
+            console.log('📋 Board after move:', board);
             // Add move to history
             session.moves.push({
                 playerId: new mongoose_1.default.Types.ObjectId(userId),
@@ -49,8 +54,8 @@ const handleTicTacToe = (socket, io, activeGames) => {
             });
             // Check for winner
             const winner = checkWinner(board);
-            // Update game state
-            session.gameState = { board };
+            // CRITICAL FIX: Update game state with the modified board
+            session.gameState = { board: board };
             if (winner) {
                 console.log(`🏁 Game ended. Winner: ${winner}`);
                 session.status = 'finished';
@@ -111,10 +116,11 @@ const handleTicTacToe = (socket, io, activeGames) => {
                     : session.players.player1;
             }
             await session.save();
-            console.log(`✅ Move processed. Next turn: ${session.currentTurn}`);
+            console.log(`✅ Move processed. Board:`, session.gameState.board);
+            console.log(`✅ Next turn: ${session.currentTurn}`);
             // Broadcast move to entire room
             io.to(roomId).emit('tic-tac-toe:move-made', {
-                board: session.gameState.board,
+                board: session.gameState.board, // Send the complete updated board
                 position,
                 currentTurn: session.currentTurn?.toString(),
                 winner: winner || null,
@@ -163,7 +169,7 @@ const handleTicTacToe = (socket, io, activeGames) => {
             session.moves = [];
             session.finishedAt = undefined;
             await session.save();
-            console.log('✅ Game reset successfully');
+            console.log('✅ Game reset successfully. Board:', session.gameState.board);
             // Broadcast reset to room
             io.to(roomId).emit('tic-tac-toe:reset', {
                 board: session.gameState.board,
