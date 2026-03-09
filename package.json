@@ -1,13 +1,13 @@
 {
   "name": "gamehub-server",
   "version": "1.0.0",
-  "description": "",
+  "description": "GameHub backend — Node.js + Express + MongoDB + Socket.IO",
   "main": "index.js",
-    "scripts": {
+  "scripts": {
     "dev": "nodemon src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js"
-    },
+  },
   "keywords": [],
   "author": "",
   "license": "ISC",
@@ -21,6 +21,7 @@
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.1.2",
+    "node-fetch": "^3.3.2",
     "socket.io": "^4.8.3",
     "uuid": "^13.0.0"
   },
