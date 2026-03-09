@@ -1,7 +1,9 @@
 // ============================================
 // FILE: src/server.ts
 // ============================================
-import express, { Application, Request, Response } from 'express';
+
+// CommonJS-compatible imports for Node + TypeScript
+import express, { Application, Request, Response, NextFunction } from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import dotenv from 'dotenv';
@@ -63,7 +65,7 @@ app.use((req: Request, res: Response) => {
 });
 
 // Error handler
-app.use((err: any, req: Request, res: Response, next: any) => {
+app.use((err: any, req: Request, res: Response, next: NextFunction) => {
   console.error('Error:', err);
   res.status(err.status || 500).json({
     success: false,
@@ -80,7 +82,7 @@ const PORT = process.env.PORT || 5000;
 const startServer = async () => {
   try {
     await connectDB();
-    
+
     httpServer.listen(PORT, () => {
       console.log(`
 ╔════════════════════════════════════════╗
@@ -133,4 +135,5 @@ process.on('SIGINT', () => {
   });
 });
 
+// Export app for testing
 export default app;

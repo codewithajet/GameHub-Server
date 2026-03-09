@@ -1,23 +1,29 @@
+"use strict";
 // ============================================
 // FILE: src/server.ts
 // ============================================
-import express from 'express';
-import { createServer } from 'http';
-import { Server } from 'socket.io';
-import dotenv from 'dotenv';
-import cors from 'cors';
-import helmet from 'helmet';
-import connectDB from './config/database';
-import authRoutes from './routes/auth.routes';
-import gameRoutes from './routes/game.routes';
-import { initializeSocket } from './socket/socketHandler';
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+// CommonJS-compatible imports for Node + TypeScript
+const express_1 = __importDefault(require("express"));
+const http_1 = require("http");
+const socket_io_1 = require("socket.io");
+const dotenv_1 = __importDefault(require("dotenv"));
+const cors_1 = __importDefault(require("cors"));
+const helmet_1 = __importDefault(require("helmet"));
+const database_1 = __importDefault(require("./config/database"));
+const auth_routes_1 = __importDefault(require("./routes/auth.routes"));
+const game_routes_1 = __importDefault(require("./routes/game.routes"));
+const socketHandler_1 = require("./socket/socketHandler");
 // Load environment variables
-dotenv.config();
+dotenv_1.default.config();
 // Create Express app
-const app = express();
-const httpServer = createServer(app);
+const app = (0, express_1.default)();
+const httpServer = (0, http_1.createServer)(app);
 // Initialize Socket.IO
-const io = new Server(httpServer, {
+const io = new socket_io_1.Server(httpServer, {
     cors: {
         origin: process.env.CORS_ORIGIN || '*',
         methods: ['GET', 'POST'],
@@ -27,16 +33,16 @@ const io = new Server(httpServer, {
     pingInterval: 25000,
 });
 // Middleware
-app.use(helmet());
-app.use(cors({
+app.use((0, helmet_1.default)());
+app.use((0, cors_1.default)({
     origin: process.env.CORS_ORIGIN || '*',
     credentials: true,
 }));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express_1.default.json());
+app.use(express_1.default.urlencoded({ extended: true }));
 // API Routes
-app.use('/api/auth', authRoutes);
-app.use('/api/games', gameRoutes);
+app.use('/api/auth', auth_routes_1.default);
+app.use('/api/games', game_routes_1.default);
 // Health check endpoint
 app.get('/api/health', (req, res) => {
     res.status(200).json({
@@ -61,12 +67,12 @@ app.use((err, req, res, next) => {
     });
 });
 // Initialize Socket.IO handlers
-initializeSocket(io);
+(0, socketHandler_1.initializeSocket)(io);
 // Connect to database and start server
 const PORT = process.env.PORT || 5000;
 const startServer = async () => {
     try {
-        await connectDB();
+        await (0, database_1.default)();
         httpServer.listen(PORT, () => {
             console.log(`
 ╔════════════════════════════════════════╗
@@ -116,5 +122,6 @@ process.on('SIGINT', () => {
         process.exit(0);
     });
 });
-export default app;
+// Export app for testing
+exports.default = app;
 //# sourceMappingURL=server.js.map

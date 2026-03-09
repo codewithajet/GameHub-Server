@@ -1,13 +1,19 @@
-import mongoose from 'mongoose';
-import GameSession from '../models/GameSession';
-import User from '../models/User';
-export const handleTicTacToe = (socket, io, activeGames) => {
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.handleTicTacToe = void 0;
+const mongoose_1 = __importDefault(require("mongoose"));
+const GameSession_1 = __importDefault(require("../models/GameSession"));
+const User_1 = __importDefault(require("../models/User"));
+const handleTicTacToe = (socket, io, activeGames) => {
     socket.on('tic-tac-toe:move', async (data) => {
         const { roomId, position, sessionId } = data;
         const userId = socket.data.userId;
         try {
             console.log(`🎯 Tic-Tac-Toe move from user ${userId}: position ${position}`);
-            const session = await GameSession.findById(sessionId);
+            const session = await GameSession_1.default.findById(sessionId);
             if (!session) {
                 socket.emit('error', { message: 'Game session not found' });
                 return;
@@ -42,7 +48,7 @@ export const handleTicTacToe = (socket, io, activeGames) => {
             console.log('📋 Board after move:', board);
             // Add move to history
             session.moves.push({
-                playerId: new mongoose.Types.ObjectId(userId),
+                playerId: new mongoose_1.default.Types.ObjectId(userId),
                 move: { position, symbol: playerSymbol },
                 timestamp: new Date(),
             });
@@ -57,7 +63,7 @@ export const handleTicTacToe = (socket, io, activeGames) => {
                 if (winner === 'TIE') {
                     session.isDraw = true;
                     // Update stats for both players
-                    await User.findByIdAndUpdate(session.players.player1, {
+                    await User_1.default.findByIdAndUpdate(session.players.player1, {
                         $inc: {
                             'stats.gamesPlayed': 1,
                             'stats.gamesTied': 1,
@@ -65,7 +71,7 @@ export const handleTicTacToe = (socket, io, activeGames) => {
                         }
                     });
                     if (session.players.player2) {
-                        await User.findByIdAndUpdate(session.players.player2, {
+                        await User_1.default.findByIdAndUpdate(session.players.player2, {
                             $inc: {
                                 'stats.gamesPlayed': 1,
                                 'stats.gamesTied': 1,
@@ -84,7 +90,7 @@ export const handleTicTacToe = (socket, io, activeGames) => {
                         : session.players.player1;
                     session.winner = winnerId;
                     // Update winner stats
-                    await User.findByIdAndUpdate(winnerId, {
+                    await User_1.default.findByIdAndUpdate(winnerId, {
                         $inc: {
                             'stats.gamesPlayed': 1,
                             'stats.gamesWon': 1,
@@ -93,7 +99,7 @@ export const handleTicTacToe = (socket, io, activeGames) => {
                     });
                     // Update loser stats
                     if (loserId) {
-                        await User.findByIdAndUpdate(loserId, {
+                        await User_1.default.findByIdAndUpdate(loserId, {
                             $inc: {
                                 'stats.gamesPlayed': 1,
                                 'stats.gamesLost': 1,
@@ -142,7 +148,7 @@ export const handleTicTacToe = (socket, io, activeGames) => {
         const userId = socket.data.userId;
         try {
             console.log(`🔄 Reset request from user ${userId}`);
-            const session = await GameSession.findById(sessionId);
+            const session = await GameSession_1.default.findById(sessionId);
             if (!session) {
                 socket.emit('error', { message: 'Game session not found' });
                 return;
@@ -178,6 +184,7 @@ export const handleTicTacToe = (socket, io, activeGames) => {
         }
     });
 };
+exports.handleTicTacToe = handleTicTacToe;
 // Helper function to check for winner
 function checkWinner(board) {
     const winningCombos = [

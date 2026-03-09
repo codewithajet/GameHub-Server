@@ -1,5 +1,11 @@
-import User from '../models/User';
-import { generateToken } from '../utils/jwt.utils';
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.logout = exports.getMe = exports.login = exports.register = exports.deviceLogin = exports.googleAuth = void 0;
+const User_1 = __importDefault(require("../models/User"));
+const jwt_utils_1 = require("../utils/jwt.utils");
 // ─── Shared helper ────────────────────────────────────────────────────────────
 // Every endpoint returns the same shape so the frontend never has to branch.
 const buildUserPayload = (user) => ({
@@ -32,7 +38,7 @@ const buildUserPayload = (user) => ({
 //  4. Create if new, update profilePicture/deviceId if existing
 //  5. Return GameHub JWT + user object
 // =============================================================================
-export const googleAuth = async (req, res) => {
+const googleAuth = async (req, res) => {
     try {
         const { accessToken, googleId: clientGoogleId, // sent by the app; we re-verify below
         name: bodyName, email: bodyEmail, profilePicture: bodyPicture, deviceId, } = req.body;
@@ -74,9 +80,9 @@ export const googleAuth = async (req, res) => {
         // Search by googleId first (fast indexed lookup).
         // Fall back to email so pre-existing local accounts are merged rather than
         // duplicated when a user signs in with Google for the first time.
-        let user = await User.findOne({ googleId });
+        let user = await User_1.default.findOne({ googleId });
         if (!user)
-            user = await User.findOne({ email: verifiedEmail });
+            user = await User_1.default.findOne({ email: verifiedEmail });
         if (user) {
             // ── Existing user: update mutable fields ───────────────────────────
             let dirty = false;
@@ -102,12 +108,12 @@ export const googleAuth = async (req, res) => {
             }
             else {
                 // Still bump lastActive even when nothing else changed
-                await User.updateOne({ _id: user._id }, { isOnline: true, lastActive: new Date() });
+                await User_1.default.updateOne({ _id: user._id }, { isOnline: true, lastActive: new Date() });
             }
         }
         else {
             // ── New user: create ────────────────────────────────────────────────
-            user = await User.create({
+            user = await User_1.default.create({
                 name: verifiedName,
                 email: verifiedEmail,
                 googleId,
@@ -119,7 +125,7 @@ export const googleAuth = async (req, res) => {
                 // No password — this user authenticates via Google only
             });
         }
-        const token = generateToken(user._id.toString());
+        const token = (0, jwt_utils_1.generateToken)(user._id.toString());
         res.status(200).json({
             success: true,
             message: 'Google authentication successful',
@@ -135,6 +141,7 @@ export const googleAuth = async (req, res) => {
         });
     }
 };
+exports.googleAuth = googleAuth;
 // =============================================================================
 // POST /api/auth/device-login
 //
@@ -144,14 +151,14 @@ export const googleAuth = async (req, res) => {
 // Returns HTTP 404 (intentionally, not a server error) when the device is
 // unknown — the app then shows the normal sign-in screen.
 // =============================================================================
-export const deviceLogin = async (req, res) => {
+const deviceLogin = async (req, res) => {
     try {
         const { deviceId } = req.body;
         if (!deviceId) {
             res.status(400).json({ success: false, message: 'deviceId is required' });
             return;
         }
-        const user = await User.findOne({ deviceId });
+        const user = await User_1.default.findOne({ deviceId });
         if (!user) {
             // 404 is intentional — "not registered yet" is not a server error
             res.status(404).json({ success: false, message: 'No account linked to this device' });
@@ -160,7 +167,7 @@ export const deviceLogin = async (req, res) => {
         user.isOnline = true;
         user.lastActive = new Date();
         await user.save();
-        const token = generateToken(user._id.toString());
+        const token = (0, jwt_utils_1.generateToken)(user._id.toString());
         res.status(200).json({
             success: true,
             message: 'Auto-login successful',
@@ -176,21 +183,22 @@ export const deviceLogin = async (req, res) => {
         });
     }
 };
+exports.deviceLogin = deviceLogin;
 // =============================================================================
 // Original endpoints — preserved exactly.
 // Only the response shape is unified via buildUserPayload so the frontend
 // always receives the same fields regardless of sign-in method.
 // =============================================================================
-export const register = async (req, res) => {
+const register = async (req, res) => {
     try {
         const { name, email, password } = req.body;
-        const existingUser = await User.findOne({ email });
+        const existingUser = await User_1.default.findOne({ email });
         if (existingUser) {
             res.status(400).json({ success: false, message: 'User already exists with this email' });
             return;
         }
-        const user = await User.create({ name, email, password });
-        const token = generateToken(user._id.toString());
+        const user = await User_1.default.create({ name, email, password });
+        const token = (0, jwt_utils_1.generateToken)(user._id.toString());
         res.status(201).json({
             success: true,
             message: 'User registered successfully',
@@ -201,14 +209,15 @@ export const register = async (req, res) => {
         res.status(500).json({ success: false, message: 'Error registering user', error: error.message });
     }
 };
-export const login = async (req, res) => {
+exports.register = register;
+const login = async (req, res) => {
     try {
         const { email, password } = req.body;
         if (!email || !password) {
             res.status(400).json({ success: false, message: 'Please provide email and password' });
             return;
         }
-        const user = await User.findOne({ email }).select('+password');
+        const user = await User_1.default.findOne({ email }).select('+password');
         if (!user || !(await user.comparePassword(password))) {
             res.status(401).json({ success: false, message: 'Invalid credentials' });
             return;
@@ -216,7 +225,7 @@ export const login = async (req, res) => {
         user.isOnline = true;
         user.lastActive = new Date();
         await user.save();
-        const token = generateToken(user._id.toString());
+        const token = (0, jwt_utils_1.generateToken)(user._id.toString());
         res.status(200).json({
             success: true,
             message: 'Login successful',
@@ -227,9 +236,10 @@ export const login = async (req, res) => {
         res.status(500).json({ success: false, message: 'Error logging in', error: error.message });
     }
 };
-export const getMe = async (req, res) => {
+exports.login = login;
+const getMe = async (req, res) => {
     try {
-        const user = await User.findById(req.userId);
+        const user = await User_1.default.findById(req.userId);
         if (!user) {
             res.status(404).json({ success: false, message: 'User not found' });
             return;
@@ -243,9 +253,10 @@ export const getMe = async (req, res) => {
         res.status(500).json({ success: false, message: 'Error fetching user data', error: error.message });
     }
 };
-export const logout = async (req, res) => {
+exports.getMe = getMe;
+const logout = async (req, res) => {
     try {
-        const user = await User.findById(req.userId);
+        const user = await User_1.default.findById(req.userId);
         if (user) {
             user.isOnline = false;
             user.lastActive = new Date();
@@ -257,4 +268,5 @@ export const logout = async (req, res) => {
         res.status(500).json({ success: false, message: 'Error logging out', error: error.message });
     }
 };
+exports.logout = logout;
 //# sourceMappingURL=auth.controller.js.map
