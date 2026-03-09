@@ -2,8 +2,12 @@ import mongoose, { Document } from 'mongoose';
 export interface IUser extends Document {
     name: string;
     email: string;
-    password: string;
+    password?: string;
     avatar?: string;
+    profilePicture?: string;
+    googleId?: string;
+    deviceId?: string;
+    authProvider: 'local' | 'google';
     stats: {
         gamesPlayed: number;
         gamesWon: number;

@@ -1,12 +1,6 @@
-"use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.getLeaderboard = exports.getGameHistory = void 0;
-const GameSession_1 = __importDefault(require("../models/GameSession"));
-const User_1 = __importDefault(require("../models/User"));
-const getGameHistory = async (req, res) => {
+import GameSession from '../models/GameSession';
+import User from '../models/User';
+export const getGameHistory = async (req, res) => {
     try {
         const userId = req.userId;
         const gameType = req.query.gameType;
@@ -21,7 +15,7 @@ const getGameHistory = async (req, res) => {
         if (gameType) {
             query.gameType = gameType;
         }
-        const games = await GameSession_1.default.find(query)
+        const games = await GameSession.find(query)
             .sort({ finishedAt: -1 })
             .limit(limit)
             .populate('players.player1', 'name email')
@@ -40,8 +34,7 @@ const getGameHistory = async (req, res) => {
         });
     }
 };
-exports.getGameHistory = getGameHistory;
-const getLeaderboard = async (req, res) => {
+export const getLeaderboard = async (req, res) => {
     try {
         const gameType = req.query.gameType;
         let sortField = 'stats.gamesWon';
@@ -50,7 +43,7 @@ const getLeaderboard = async (req, res) => {
         }
         const sortOptions = {};
         sortOptions[sortField] = -1;
-        const users = await User_1.default.find()
+        const users = await User.find()
             .select('name stats gameStats')
             .sort(sortOptions)
             .limit(100);
@@ -67,5 +60,4 @@ const getLeaderboard = async (req, res) => {
         });
     }
 };
-exports.getLeaderboard = getLeaderboard;
 //# sourceMappingURL=game.controller.js.map

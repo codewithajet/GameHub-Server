@@ -1,16 +1,10 @@
-"use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.initializeSocket = initializeSocket;
-const mongoose_1 = __importDefault(require("mongoose"));
-const jwt_utils_1 = require("../utils/jwt.utils");
-const User_1 = __importDefault(require("../models/User"));
-const GameSession_1 = __importDefault(require("../models/GameSession"));
-const ticTacToe_handler_1 = require("./ticTacToe.handler");
-const chess_handler_1 = require("./chess.handler");
-const checkers_handler_1 = require("./checkers.handler");
+import mongoose from 'mongoose';
+import { verifyToken } from '../utils/jwt.utils';
+import User from '../models/User';
+import GameSession from '../models/GameSession';
+import { handleTicTacToe } from './ticTacToe.handler';
+import { handleChess } from './chess.handler';
+import { handleCheckers } from './checkers.handler';
 const connectedUsers = new Map();
 const waitingQueue = new Map();
 const activeGames = new Map();
@@ -23,7 +17,7 @@ function broadcastQueueUpdate(io, gameType) {
         players: queue.map(p => ({ username: p.username, waitTime: Date.now() - p.joinedAt }))
     });
 }
-function initializeSocket(io) {
+export function initializeSocket(io) {
     // Authentication middleware
     io.use(async (socket, next) => {
         try {
@@ -31,8 +25,8 @@ function initializeSocket(io) {
             if (!token) {
                 return next(new Error('Authentication error'));
             }
-            const decoded = (0, jwt_utils_1.verifyToken)(token);
-            const user = await User_1.default.findById(decoded.id);
+            const decoded = verifyToken(token);
+            const user = await User.findById(decoded.id);
             if (!user) {
                 return next(new Error('User not found'));
             }
@@ -54,7 +48,7 @@ function initializeSocket(io) {
             socketId: socket.id,
             username,
         });
-        User_1.default.findByIdAndUpdate(userId, {
+        User.findByIdAndUpdate(userId, {
             isOnline: true,
             lastActive: new Date(),
         }).exec();
@@ -128,15 +122,15 @@ function initializeSocket(io) {
                 activeGames.set(userId, roomId);
                 activeGames.set(opponent.userId, roomId);
                 try {
-                    const gameSession = await GameSession_1.default.create({
+                    const gameSession = await GameSession.create({
                         gameType,
                         status: 'active',
                         roomId: roomId,
                         players: {
-                            player1: new mongoose_1.default.Types.ObjectId(userId),
-                            player2: new mongoose_1.default.Types.ObjectId(opponent.userId),
+                            player1: new mongoose.Types.ObjectId(userId),
+                            player2: new mongoose.Types.ObjectId(opponent.userId),
                         },
-                        currentTurn: new mongoose_1.default.Types.ObjectId(userId),
+                        currentTurn: new mongoose.Types.ObjectId(userId),
                         startedAt: new Date(),
                     });
                     console.log(`   ✅ Session: ${gameSession._id}`);
@@ -197,9 +191,9 @@ function initializeSocket(io) {
         // ===================================
         // GAME HANDLERS (Separate Files)
         // ===================================
-        (0, ticTacToe_handler_1.handleTicTacToe)(socket, io, activeGames);
-        (0, chess_handler_1.handleChess)(socket, io, activeGames);
-        (0, checkers_handler_1.handleCheckers)(socket, io, activeGames);
+        handleTicTacToe(socket, io, activeGames);
+        handleChess(socket, io, activeGames);
+        handleCheckers(socket, io, activeGames);
         // ===================================
         // LEAVE GAME
         // ===================================
@@ -244,7 +238,7 @@ function initializeSocket(io) {
                 activeGames.delete(userId);
                 // Find and finish the game session
                 try {
-                    const session = await GameSession_1.default.findOne({
+                    const session = await GameSession.findOne({
                         $or: [
                             { 'players.player1': userId },
                             { 'players.player2': userId }
@@ -262,7 +256,7 @@ function initializeSocket(io) {
                             activeGames.delete(opponentId.toString());
                             // Award win to opponent
                             const gameTypeStats = `gameStats.${session.gameType}.wins`;
-                            await User_1.default.findByIdAndUpdate(opponentId, {
+                            await User.findByIdAndUpdate(opponentId, {
                                 $inc: {
                                     'stats.gamesPlayed': 1,
                                     'stats.gamesWon': 1,
@@ -271,7 +265,7 @@ function initializeSocket(io) {
                             });
                             // Record loss for disconnected player
                             const lossStats = `gameStats.${session.gameType}.losses`;
-                            await User_1.default.findByIdAndUpdate(userId, {
+                            await User.findByIdAndUpdate(userId, {
                                 $inc: {
                                     'stats.gamesPlayed': 1,
                                     'stats.gamesLost': 1,
@@ -285,7 +279,7 @@ function initializeSocket(io) {
                     console.error('Error handling disconnect:', error);
                 }
             }
-            await User_1.default.findByIdAndUpdate(userId, {
+            await User.findByIdAndUpdate(userId, {
                 isOnline: false,
                 lastActive: new Date(),
             });

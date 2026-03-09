@@ -1,5 +1,7 @@
 import { Request, Response } from 'express';
 import { AuthRequest } from '../types';
+export declare const googleAuth: (req: Request, res: Response) => Promise<void>;
+export declare const deviceLogin: (req: Request, res: Response) => Promise<void>;
 export declare const register: (req: Request, res: Response) => Promise<void>;
 export declare const login: (req: Request, res: Response) => Promise<void>;
 export declare const getMe: (req: AuthRequest, res: Response) => Promise<void>;

@@ -1,47 +1,11 @@
-"use strict";
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", { value: true });
-// ============================================
-// FILE: src/models/User.ts
-// ============================================
-const mongoose_1 = __importStar(require("mongoose"));
-const bcryptjs_1 = __importDefault(require("bcryptjs"));
-const UserSchema = new mongoose_1.Schema({
+// src/models/User.ts
+// Backward-compatible update:
+//   • password is now optional (Google users have none)
+//   • adds googleId, deviceId, profilePicture, authProvider
+//   • all existing fields/methods are preserved
+import mongoose, { Schema } from 'mongoose';
+import bcrypt from 'bcryptjs';
+const UserSchema = new Schema({
     name: {
         type: String,
         required: [true, 'Name is required'],
@@ -57,15 +21,30 @@ const UserSchema = new mongoose_1.Schema({
         trim: true,
         match: [/^\S+@\S+\.\S+$/, 'Please provide a valid email'],
     },
+    // No longer required — Google-auth users authenticate via token only
     password: {
         type: String,
-        required: [true, 'Password is required'],
         minlength: [6, 'Password must be at least 6 characters'],
         select: false,
     },
-    avatar: {
+    avatar: { type: String, default: null },
+    profilePicture: { type: String, default: null },
+    // Sparse indexes: null values don't take an index slot, and uniqueness is
+    // only enforced among documents that actually have the field set.
+    googleId: {
         type: String,
         default: null,
+        index: { sparse: true },
+    },
+    deviceId: {
+        type: String,
+        default: null,
+        index: { sparse: true },
+    },
+    authProvider: {
+        type: String,
+        enum: ['local', 'google'],
+        default: 'local',
     },
     stats: {
         gamesPlayed: { type: Number, default: 0 },
@@ -90,27 +69,20 @@ const UserSchema = new mongoose_1.Schema({
             ties: { type: Number, default: 0 },
         },
     },
-    isOnline: {
-        type: Boolean,
-        default: false,
-    },
-    lastActive: {
-        type: Date,
-        default: Date.now,
-    },
-}, {
-    timestamps: true,
-});
-// Hash password before saving
+    isOnline: { type: Boolean, default: false },
+    lastActive: { type: Date, default: Date.now },
+}, { timestamps: true });
+// Hash password only when it is present and has been modified
 UserSchema.pre('save', async function () {
-    if (!this.isModified('password'))
+    if (!this.isModified('password') || !this.password)
         return;
-    const salt = await bcryptjs_1.default.genSalt(10);
-    this.password = await bcryptjs_1.default.hash(this.password, salt);
+    const salt = await bcrypt.genSalt(10);
+    this.password = await bcrypt.hash(this.password, salt);
 });
-// Compare password method
 UserSchema.methods.comparePassword = async function (candidatePassword) {
-    return await bcryptjs_1.default.compare(candidatePassword, this.password);
+    if (!this.password)
+        return false;
+    return bcrypt.compare(candidatePassword, this.password);
 };
-exports.default = mongoose_1.default.model('User', UserSchema);
+export default mongoose.model('User', UserSchema);
 //# sourceMappingURL=User.js.map

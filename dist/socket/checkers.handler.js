@@ -1,19 +1,13 @@
-"use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.handleCheckers = void 0;
-const mongoose_1 = __importDefault(require("mongoose"));
-const GameSession_1 = __importDefault(require("../models/GameSession"));
-const User_1 = __importDefault(require("../models/User"));
-const handleCheckers = (socket, io, activeGames) => {
+import mongoose from 'mongoose';
+import GameSession from '../models/GameSession';
+import User from '../models/User';
+export const handleCheckers = (socket, io, activeGames) => {
     socket.on('checkers:move', async (data) => {
         const { roomId, from, to, sessionId, gameState, captured, mustContinue, winner } = data;
         const userId = socket.data.userId;
         try {
             console.log(`🎯 Checkers move from user ${userId}:`, { from, to, winner });
-            const session = await GameSession_1.default.findById(sessionId);
+            const session = await GameSession.findById(sessionId);
             if (!session) {
                 socket.emit('error', { message: 'Game session not found' });
                 return;
@@ -34,7 +28,7 @@ const handleCheckers = (socket, io, activeGames) => {
             const playerColor = isPlayer1 ? 'red' : 'black';
             // Add move to history
             session.moves.push({
-                playerId: new mongoose_1.default.Types.ObjectId(userId),
+                playerId: new mongoose.Types.ObjectId(userId),
                 move: { from, to, color: playerColor, captured },
                 timestamp: new Date(),
             });
@@ -53,7 +47,7 @@ const handleCheckers = (socket, io, activeGames) => {
                     : session.players.player1;
                 session.winner = winnerId;
                 // Update winner stats
-                await User_1.default.findByIdAndUpdate(winnerId, {
+                await User.findByIdAndUpdate(winnerId, {
                     $inc: {
                         'stats.gamesPlayed': 1,
                         'stats.gamesWon': 1,
@@ -62,7 +56,7 @@ const handleCheckers = (socket, io, activeGames) => {
                 });
                 // Update loser stats
                 if (loserId) {
-                    await User_1.default.findByIdAndUpdate(loserId, {
+                    await User.findByIdAndUpdate(loserId, {
                         $inc: {
                             'stats.gamesPlayed': 1,
                             'stats.gamesLost': 1,
@@ -109,5 +103,4 @@ const handleCheckers = (socket, io, activeGames) => {
         }
     });
 };
-exports.handleCheckers = handleCheckers;
 //# sourceMappingURL=checkers.handler.js.map

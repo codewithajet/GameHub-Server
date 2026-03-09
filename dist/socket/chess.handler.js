@@ -1,19 +1,13 @@
-"use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.handleChess = void 0;
-const mongoose_1 = __importDefault(require("mongoose"));
-const GameSession_1 = __importDefault(require("../models/GameSession"));
-const User_1 = __importDefault(require("../models/User"));
-const handleChess = (socket, io, activeGames) => {
+import mongoose from 'mongoose';
+import GameSession from '../models/GameSession';
+import User from '../models/User';
+export const handleChess = (socket, io, activeGames) => {
     socket.on('chess:move', async (data) => {
         const { roomId, from, to, sessionId, gameState, winner } = data;
         const userId = socket.data.userId;
         try {
             console.log(`♟️ Chess move from user ${userId}:`, { from, to, winner });
-            const session = await GameSession_1.default.findById(sessionId);
+            const session = await GameSession.findById(sessionId);
             if (!session) {
                 socket.emit('error', { message: 'Game session not found' });
                 return;
@@ -34,7 +28,7 @@ const handleChess = (socket, io, activeGames) => {
             const playerColor = isPlayer1 ? 'white' : 'black';
             // Add move to history
             session.moves.push({
-                playerId: new mongoose_1.default.Types.ObjectId(userId),
+                playerId: new mongoose.Types.ObjectId(userId),
                 move: { from, to, color: playerColor },
                 timestamp: new Date(),
             });
@@ -48,7 +42,7 @@ const handleChess = (socket, io, activeGames) => {
                 if (winner === 'draw') {
                     session.isDraw = true;
                     // Update stats for both players
-                    await User_1.default.findByIdAndUpdate(session.players.player1, {
+                    await User.findByIdAndUpdate(session.players.player1, {
                         $inc: {
                             'stats.gamesPlayed': 1,
                             'stats.gamesTied': 1,
@@ -56,7 +50,7 @@ const handleChess = (socket, io, activeGames) => {
                         }
                     });
                     if (session.players.player2) {
-                        await User_1.default.findByIdAndUpdate(session.players.player2, {
+                        await User.findByIdAndUpdate(session.players.player2, {
                             $inc: {
                                 'stats.gamesPlayed': 1,
                                 'stats.gamesTied': 1,
@@ -75,7 +69,7 @@ const handleChess = (socket, io, activeGames) => {
                         : session.players.player1;
                     session.winner = winnerId;
                     // Update winner stats
-                    await User_1.default.findByIdAndUpdate(winnerId, {
+                    await User.findByIdAndUpdate(winnerId, {
                         $inc: {
                             'stats.gamesPlayed': 1,
                             'stats.gamesWon': 1,
@@ -84,7 +78,7 @@ const handleChess = (socket, io, activeGames) => {
                     });
                     // Update loser stats
                     if (loserId) {
-                        await User_1.default.findByIdAndUpdate(loserId, {
+                        await User.findByIdAndUpdate(loserId, {
                             $inc: {
                                 'stats.gamesPlayed': 1,
                                 'stats.gamesLost': 1,
@@ -128,5 +122,4 @@ const handleChess = (socket, io, activeGames) => {
         }
     });
 };
-exports.handleChess = handleChess;
 //# sourceMappingURL=chess.handler.js.map
