@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.logout = exports.getMe = exports.login = exports.register = exports.deviceLogin = exports.googleAuth = void 0;
+exports.updateProfile = exports.logout = exports.getMe = exports.login = exports.register = exports.deviceLogin = exports.googleAuth = void 0;
 const User_1 = __importDefault(require("../models/User"));
 const jwt_utils_1 = require("../utils/jwt.utils");
 // ─── Shared helper ────────────────────────────────────────────────────────────
@@ -269,4 +269,90 @@ const logout = async (req, res) => {
     }
 };
 exports.logout = logout;
+const updateProfile = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) {
+            return res.status(401).json({ success: false, message: 'Not authenticated' });
+        }
+        const { name, currentPassword, newPassword } = req.body;
+        // ── Validation ────────────────────────────────────────────────────────────
+        if (name !== undefined) {
+            const trimmed = name.trim();
+            if (trimmed.length < 2 || trimmed.length > 50) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Name must be between 2 and 50 characters.',
+                });
+            }
+        }
+        if (newPassword !== undefined) {
+            if (newPassword.length < 6) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'New password must be at least 6 characters.',
+                });
+            }
+            if (!currentPassword) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Please provide your current password to set a new one.',
+                });
+            }
+        }
+        // ── Load user (with password for verification) ────────────────────────────
+        const user = await User_1.default.findById(userId).select('+password');
+        if (!user) {
+            return res.status(404).json({ success: false, message: 'User not found.' });
+        }
+        // ── Password change flow ──────────────────────────────────────────────────
+        if (newPassword) {
+            // Google-only accounts have no password — block change
+            if (!user.password) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Your account uses Google Sign-In. Password changes are not supported.',
+                });
+            }
+            const isMatch = await user.comparePassword(currentPassword);
+            if (!isMatch) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Current password is incorrect.',
+                });
+            }
+            user.password = newPassword; // pre-save hook in User model handles hashing
+        }
+        // ── Apply name change ─────────────────────────────────────────────────────
+        if (name !== undefined) {
+            user.name = name.trim();
+        }
+        await user.save();
+        // ── Return updated user (without password) ────────────────────────────────
+        return res.status(200).json({
+            success: true,
+            message: 'Profile updated successfully.',
+            data: {
+                user: {
+                    id: user._id,
+                    name: user.name,
+                    email: user.email,
+                    avatar: user.avatar,
+                    authProvider: user.authProvider ?? 'local',
+                    profilePicture: user.profilePicture ?? null,
+                    stats: user.stats,
+                    gameStats: user.gameStats,
+                },
+            },
+        });
+    }
+    catch (error) {
+        console.error('updateProfile error:', error);
+        return res.status(500).json({
+            success: false,
+            message: error.message ?? 'Server error. Please try again.',
+        });
+    }
+};
+exports.updateProfile = updateProfile;
 //# sourceMappingURL=auth.controller.js.map

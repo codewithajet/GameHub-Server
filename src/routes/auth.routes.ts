@@ -5,21 +5,16 @@ import {
   login,
   getMe,
   logout,
-  googleAuth,
-  deviceLogin,
+  updateProfile,  
 } from '../controllers/auth.controller';
 import { protect } from '../middleware/auth.middleware';
 
 const router = express.Router();
 
-// ── Public (no JWT required) ──────────────────────────────────────────────────
-router.post('/register',     register);
-router.post('/login',        login);
-router.post('/google',       googleAuth);   // Google OAuth sign-in / sign-up
-router.post('/device-login', deviceLogin); // Silent auto-login via device ID
-
-// ── Protected (JWT required) ──────────────────────────────────────────────────
-router.get('/me',      protect, getMe);
-router.post('/logout', protect, logout);
+router.post('/register', register);
+router.post('/login',    login);
+router.get('/me',        protect, getMe);
+router.post('/logout',   protect, logout);
+router.put('/profile',   protect, updateProfile);  
 
 export default router;
