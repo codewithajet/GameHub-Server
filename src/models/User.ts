@@ -1,19 +1,15 @@
 // src/models/User.ts
-// Backward-compatible update:
-//   • password is now optional (Google users have none)
-//   • adds googleId, deviceId, profilePicture, authProvider
-//   • all existing fields/methods are preserved
 import mongoose, { Schema, Document } from 'mongoose';
 import bcrypt from 'bcryptjs';
 
 export interface IUser extends Document {
   name:           string;
   email:          string;
-  password?:      string;         // optional — Google users have no password
+  password?:      string;            // optional — Google users have no password
   avatar?:        string;
-  profilePicture?: string;        // Google profile photo URL
-  googleId?:      string;         // Google's unique "sub" identifier
-  deviceId?:      string;         // expo-device ID stored for auto-login
+  profilePicture?: string | null;    // Google profile photo URL
+  googleId?:      string;            // Google OAuth sub (unique ID)
+  deviceId?:      string;            // device fingerprint for silent auto-login
   authProvider:   'local' | 'google';
   stats: {
     gamesPlayed: number;
@@ -50,28 +46,20 @@ const UserSchema = new Schema<IUser>(
       trim:      true,
       match:     [/^\S+@\S+\.\S+$/, 'Please provide a valid email'],
     },
-    // No longer required — Google-auth users authenticate via token only
+
+    // FIX: password is now optional so Google users can be saved without one
     password: {
       type:      String,
       minlength: [6, 'Password must be at least 6 characters'],
-      select:    false,
+      select:    false,   // never returned in queries unless explicitly requested
     },
-    avatar:         { type: String, default: null },
+
+    avatar: { type: String, default: null },
+
+    // Google-specific fields
     profilePicture: { type: String, default: null },
-
-    // Sparse indexes: null values don't take an index slot, and uniqueness is
-    // only enforced among documents that actually have the field set.
-    googleId: {
-      type:   String,
-      default: null,
-      index:  { sparse: true },
-    },
-    deviceId: {
-      type:   String,
-      default: null,
-      index:  { sparse: true },
-    },
-
+    googleId:       { type: String, default: null, sparse: true },
+    deviceId:       { type: String, default: null },
     authProvider: {
       type:    String,
       enum:    ['local', 'google'],
@@ -85,21 +73,9 @@ const UserSchema = new Schema<IUser>(
       gamesTied:   { type: Number, default: 0 },
     },
     gameStats: {
-      ticTacToe: {
-        wins:   { type: Number, default: 0 },
-        losses: { type: Number, default: 0 },
-        ties:   { type: Number, default: 0 },
-      },
-      chess: {
-        wins:   { type: Number, default: 0 },
-        losses: { type: Number, default: 0 },
-        ties:   { type: Number, default: 0 },
-      },
-      checkers: {
-        wins:   { type: Number, default: 0 },
-        losses: { type: Number, default: 0 },
-        ties:   { type: Number, default: 0 },
-      },
+      ticTacToe: { wins: { type: Number, default: 0 }, losses: { type: Number, default: 0 }, ties: { type: Number, default: 0 } },
+      chess:     { wins: { type: Number, default: 0 }, losses: { type: Number, default: 0 }, ties: { type: Number, default: 0 } },
+      checkers:  { wins: { type: Number, default: 0 }, losses: { type: Number, default: 0 }, ties: { type: Number, default: 0 } },
     },
     isOnline:   { type: Boolean, default: false },
     lastActive: { type: Date,    default: Date.now },
@@ -107,13 +83,14 @@ const UserSchema = new Schema<IUser>(
   { timestamps: true },
 );
 
-// Hash password only when it is present and has been modified
+// Hash password before saving — only when it was modified and actually exists
 UserSchema.pre('save', async function () {
   if (!this.isModified('password') || !this.password) return;
-  const salt   = await bcrypt.genSalt(10);
+  const salt    = await bcrypt.genSalt(10);
   this.password = await bcrypt.hash(this.password, salt);
 });
 
+// comparePassword — safe for Google users (returns false if no password stored)
 UserSchema.methods.comparePassword = async function (
   candidatePassword: string,
 ): Promise<boolean> {

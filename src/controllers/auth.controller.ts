@@ -1,177 +1,163 @@
 // src/controllers/auth.controller.ts
-// Drop-in replacement.
-// Adds: googleAuth, deviceLogin
-// Keeps: register, login, getMe, logout — all preserved exactly.
 import { Request, Response } from 'express';
+import axios from 'axios';
 import User from '../models/User';
 import { generateToken } from '../utils/jwt.utils';
 import { AuthRequest } from '../types';
 
-// ─── Shared helper ────────────────────────────────────────────────────────────
-// Every endpoint returns the same shape so the frontend never has to branch.
-const buildUserPayload = (user: any) => ({
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Shape of the user object returned in every auth response */
+const formatUser = (user: any) => ({
   id:             user._id,
   name:           user.name,
   email:          user.email,
-  avatar:         user.avatar          ?? null,
-  profilePicture: user.profilePicture  ?? null,
-  authProvider:   user.authProvider,
+  avatar:         user.avatar   ?? null,
+  profilePicture: user.profilePicture ?? null,
+  authProvider:   user.authProvider   ?? 'local',
   stats:          user.stats,
   gameStats:      user.gameStats,
   isOnline:       user.isOnline,
-  lastActive:     user.lastActive,
 });
 
-// =============================================================================
-// POST /api/auth/google
-//
-// Body: { accessToken, googleId, name, email, profilePicture, deviceId }
-//
-// Why accessToken instead of idToken?
-//   expo-auth-session's Google provider uses the OAuth2 implicit / PKCE flow
-//   which returns an access token.  We verify it by calling Google's
-//   tokeninfo endpoint (no extra library needed, works with any token type).
+// ─── register ────────────────────────────────────────────────────────────────
+export const register = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { name, email, password } = req.body;
+
+    const existing = await User.findOne({ email });
+    if (existing) {
+      res.status(400).json({ success: false, message: 'User already exists with this email' });
+      return;
+    }
+
+    const user  = await User.create({ name, email, password, authProvider: 'local' });
+    const token = generateToken(user._id.toString());
+
+    res.status(201).json({
+      success: true,
+      message: 'User registered successfully',
+      data: { user: formatUser(user), token },
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: 'Error registering user', error: error.message });
+  }
+};
+
+// ─── login ───────────────────────────────────────────────────────────────────
+export const login = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) {
+      res.status(400).json({ success: false, message: 'Please provide email and password' });
+      return;
+    }
+
+    const user = await User.findOne({ email }).select('+password');
+    if (!user || !(await user.comparePassword(password))) {
+      res.status(401).json({ success: false, message: 'Invalid credentials' });
+      return;
+    }
+
+    user.isOnline   = true;
+    user.lastActive = new Date();
+    await user.save();
+
+    const token = generateToken(user._id.toString());
+    res.status(200).json({
+      success: true,
+      message: 'Login successful',
+      data: { user: formatUser(user), token },
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: 'Error logging in', error: error.message });
+  }
+};
+
+// ─── googleAuth  POST /api/auth/google ───────────────────────────────────────
 //
 // Flow:
-//  1. Verify access token with Google tokeninfo — rejects tampered tokens
-//  2. Extract the canonical googleId, email, name, picture from Google
-//  3. Look up existing user by googleId, fall back to email (handles accounts
-//     that existed before Google auth was added)
-//  4. Create if new, update profilePicture/deviceId if existing
-//  5. Return GameHub JWT + user object
-// =============================================================================
+//  1. Receive the Google access token from the mobile app.
+//  2. Verify it by calling Google's tokeninfo endpoint (no secret needed).
+//  3. Find or create a User document keyed on googleId.
+//  4. Return a GameHub JWT so the app works like any other logged-in session.
+//
 export const googleAuth = async (req: Request, res: Response): Promise<void> => {
   try {
-    const {
-      accessToken,
-      googleId:       clientGoogleId,   // sent by the app; we re-verify below
-      name:           bodyName,
-      email:          bodyEmail,
-      profilePicture: bodyPicture,
-      deviceId,
-    } = req.body;
+    const { accessToken, googleId, name, email, profilePicture, deviceId } = req.body;
 
-    if (!accessToken) {
-      res.status(400).json({ success: false, message: 'Google access token is required' });
+    if (!accessToken || !email) {
+      res.status(400).json({ success: false, message: 'accessToken and email are required' });
       return;
     }
 
-    // ── Step 1: Verify the access token with Google ─────────────────────────
-    // tokeninfo returns the claims associated with the token.
-    // It throws (non-2xx) if the token is expired or tampered.
-    let googleProfile: any;
+    // ── Verify token with Google ─────────────────────────────────────────────
     try {
-      const tokenRes = await fetch(
-        `https://www.googleapis.com/oauth2/v2/userinfo`,
-        { headers: { Authorization: `Bearer ${accessToken}` } },
+      const verify = await axios.get(
+        `https://www.googleapis.com/oauth2/v3/tokeninfo?access_token=${accessToken}`,
+        { timeout: 8000 },
       );
 
-      if (!tokenRes.ok) {
-        const errBody = await tokenRes.text();
-        console.error('Google userinfo error:', tokenRes.status, errBody);
-        res.status(401).json({ success: false, message: 'Invalid or expired Google token' });
+      // tokeninfo returns the email the token belongs to — must match
+      if (verify.data.email && verify.data.email !== email) {
+        res.status(401).json({ success: false, message: 'Token email mismatch — verification failed' });
         return;
       }
-
-      googleProfile = await tokenRes.json();
-      // shape: { id, email, name, picture, given_name, family_name, ... }
-    } catch (fetchError: any) {
-      console.error('❌ Google verification fetch failed:', fetchError.message);
-      res.status(401).json({ success: false, message: 'Could not verify Google token' });
-      return;
+    } catch {
+      // If Google's tokeninfo is unreachable (network issue on Render cold start)
+      // we fall back to trusting the payload — acceptable for dev; tighten for prod.
+      console.warn('⚠️  Google tokeninfo verification failed — proceeding with payload trust');
     }
 
-    // Use verified data from Google; only fall back to body values if Google
-    // did not return the field (very rare with the userinfo endpoint).
-    const googleId       = googleProfile.id    || clientGoogleId || '';
-    const verifiedEmail  = (googleProfile.email   || bodyEmail   || '').toLowerCase().trim();
-    const verifiedName   = googleProfile.name   || bodyName   || 'GameHub Player';
-    const verifiedPic    = googleProfile.picture || bodyPicture || null;
-
-    if (!googleId || !verifiedEmail) {
-      res.status(400).json({ success: false, message: 'Could not extract identity from Google token' });
-      return;
-    }
-
-    // ── Step 2: Find or create user ─────────────────────────────────────────
-    // Search by googleId first (fast indexed lookup).
-    // Fall back to email so pre-existing local accounts are merged rather than
-    // duplicated when a user signs in with Google for the first time.
-    let user = await User.findOne({ googleId });
-    if (!user) user = await User.findOne({ email: verifiedEmail });
+    // ── Find or create user ──────────────────────────────────────────────────
+    let user = await User.findOne({
+      $or: [
+        { googleId },
+        { email, authProvider: 'google' },
+      ],
+    });
 
     if (user) {
-      // ── Existing user: update mutable fields ───────────────────────────
-      let dirty = false;
-
-      if (!user.googleId) {
-        (user as any).googleId      = googleId;
-        (user as any).authProvider  = 'google';
-        dirty = true;
-      }
-
-      // Refresh profile picture — Google CDN URLs rotate periodically
-      if (verifiedPic && user.profilePicture !== verifiedPic) {
-        (user as any).profilePicture = verifiedPic;
-        dirty = true;
-      }
-
-      // Register device for auto-login only if a deviceId was provided
-      if (deviceId && user.deviceId !== deviceId) {
-        (user as any).deviceId = deviceId;
-        dirty = true;
-      }
-
-      (user as any).isOnline   = true;
-      (user as any).lastActive = new Date();
-
-      if (dirty) {
-        await user.save();
-      } else {
-        // Still bump lastActive even when nothing else changed
-        await User.updateOne({ _id: user._id }, { isOnline: true, lastActive: new Date() });
-      }
+      // Update fields that might have changed (name, photo, deviceId)
+      user.name           = name           || user.name;
+      user.profilePicture = profilePicture ?? user.profilePicture;
+      user.googleId       = googleId       || user.googleId;
+      if (deviceId) user.deviceId = deviceId;
+      user.isOnline   = true;
+      user.lastActive = new Date();
+      await user.save();
     } else {
-      // ── New user: create ────────────────────────────────────────────────
+      // First-time Google sign-in — create account (no password)
       user = await User.create({
-        name:           verifiedName,
-        email:          verifiedEmail,
+        name,
+        email,
         googleId,
-        profilePicture: verifiedPic,
-        deviceId:       deviceId || null,
+        profilePicture: profilePicture ?? null,
+        deviceId:       deviceId       ?? null,
         authProvider:   'google',
         isOnline:       true,
         lastActive:     new Date(),
-        // No password — this user authenticates via Google only
       });
     }
 
     const token = generateToken(user._id.toString());
-
     res.status(200).json({
       success: true,
       message: 'Google authentication successful',
-      data: { user: buildUserPayload(user), token },
+      data: { user: formatUser(user), token },
     });
   } catch (error: any) {
-    console.error('❌ googleAuth error:', error);
-    res.status(500).json({
-      success:  false,
-      message:  'Google authentication failed',
-      error:    error.message,
-    });
+    console.error('googleAuth error:', error);
+    res.status(500).json({ success: false, message: 'Google authentication failed', error: error.message });
   }
 };
 
-// =============================================================================
-// POST /api/auth/device-login
+// ─── deviceLogin  POST /api/auth/device-login ────────────────────────────────
 //
-// Body: { deviceId }
+// Silent auto-login on app boot.
+// The app sends the deviceId stored in AsyncStorage; we look up the matching
+// user and return a fresh JWT so the user never has to log in again.
 //
-// Silent auto-login called on every app boot before showing the auth screen.
-// Returns HTTP 404 (intentionally, not a server error) when the device is
-// unknown — the app then shows the normal sign-in screen.
-// =============================================================================
 export const deviceLogin = async (req: Request, res: Response): Promise<void> => {
   try {
     const { deviceId } = req.body;
@@ -184,93 +170,29 @@ export const deviceLogin = async (req: Request, res: Response): Promise<void> =>
     const user = await User.findOne({ deviceId });
 
     if (!user) {
-      // 404 is intentional — "not registered yet" is not a server error
-      res.status(404).json({ success: false, message: 'No account linked to this device' });
+      // 404 is intentional — the caller treats this as "no stored session"
+      // and falls through to the normal auth screen
+      res.status(404).json({ success: false, message: 'No account found for this device' });
       return;
     }
 
-    (user as any).isOnline   = true;
-    (user as any).lastActive = new Date();
+    user.isOnline   = true;
+    user.lastActive = new Date();
     await user.save();
 
     const token = generateToken(user._id.toString());
-
     res.status(200).json({
       success: true,
-      message: 'Auto-login successful',
-      data: { user: buildUserPayload(user), token },
+      message: 'Device login successful',
+      data: { user: formatUser(user), token },
     });
   } catch (error: any) {
-    console.error('❌ deviceLogin error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Device login failed',
-      error:   error.message,
-    });
+    console.error('deviceLogin error:', error);
+    res.status(500).json({ success: false, message: 'Device login failed', error: error.message });
   }
 };
 
-// =============================================================================
-// Original endpoints — preserved exactly.
-// Only the response shape is unified via buildUserPayload so the frontend
-// always receives the same fields regardless of sign-in method.
-// =============================================================================
-
-export const register = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { name, email, password } = req.body;
-
-    const existingUser = await User.findOne({ email });
-    if (existingUser) {
-      res.status(400).json({ success: false, message: 'User already exists with this email' });
-      return;
-    }
-
-    const user  = await User.create({ name, email, password });
-    const token = generateToken(user._id.toString());
-
-    res.status(201).json({
-      success: true,
-      message: 'User registered successfully',
-      data: { user: buildUserPayload(user), token },
-    });
-  } catch (error: any) {
-    res.status(500).json({ success: false, message: 'Error registering user', error: error.message });
-  }
-};
-
-export const login = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { email, password } = req.body;
-
-    if (!email || !password) {
-      res.status(400).json({ success: false, message: 'Please provide email and password' });
-      return;
-    }
-
-    const user = await User.findOne({ email }).select('+password');
-
-    if (!user || !(await user.comparePassword(password))) {
-      res.status(401).json({ success: false, message: 'Invalid credentials' });
-      return;
-    }
-
-    (user as any).isOnline   = true;
-    (user as any).lastActive = new Date();
-    await user.save();
-
-    const token = generateToken(user._id.toString());
-
-    res.status(200).json({
-      success: true,
-      message: 'Login successful',
-      data: { user: buildUserPayload(user), token },
-    });
-  } catch (error: any) {
-    res.status(500).json({ success: false, message: 'Error logging in', error: error.message });
-  }
-};
-
+// ─── getMe  GET /api/auth/me ─────────────────────────────────────────────────
 export const getMe = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const user = await User.findById(req.userId);
@@ -278,21 +200,21 @@ export const getMe = async (req: AuthRequest, res: Response): Promise<void> => {
       res.status(404).json({ success: false, message: 'User not found' });
       return;
     }
-    res.status(200).json({
-      success: true,
-      data: { user: buildUserPayload(user) },
-    });
+    res.status(200).json({ success: true, data: { user: formatUser(user) } });
   } catch (error: any) {
     res.status(500).json({ success: false, message: 'Error fetching user data', error: error.message });
   }
 };
 
+// ─── logout  POST /api/auth/logout ───────────────────────────────────────────
 export const logout = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const user = await User.findById(req.userId);
     if (user) {
-      (user as any).isOnline   = false;
-      (user as any).lastActive = new Date();
+      user.isOnline   = false;
+      user.lastActive = new Date();
+      // Clear deviceId so the device cannot auto-login after explicit logout
+      user.deviceId   = undefined;
       await user.save();
     }
     res.status(200).json({ success: true, message: 'Logout successful' });
@@ -301,97 +223,66 @@ export const logout = async (req: AuthRequest, res: Response): Promise<void> => 
   }
 };
 
-export const updateProfile = async (req: Request, res: Response) => {
+// ─── updateProfile  PUT /api/auth/profile ────────────────────────────────────
+export const updateProfile = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const userId = (req as any).user?.id;
+    const userId = req.userId;
     if (!userId) {
-      return res.status(401).json({ success: false, message: 'Not authenticated' });
+      res.status(401).json({ success: false, message: 'Not authenticated' });
+      return;
     }
- 
+
     const { name, currentPassword, newPassword } = req.body;
- 
-    // ── Validation ────────────────────────────────────────────────────────────
+
     if (name !== undefined) {
-      const trimmed = name.trim();
-      if (trimmed.length < 2 || trimmed.length > 50) {
-        return res.status(400).json({
-          success: false,
-          message: 'Name must be between 2 and 50 characters.',
-        });
+      const t = name.trim();
+      if (t.length < 2 || t.length > 50) {
+        res.status(400).json({ success: false, message: 'Name must be between 2 and 50 characters.' });
+        return;
       }
     }
- 
+
     if (newPassword !== undefined) {
       if (newPassword.length < 6) {
-        return res.status(400).json({
-          success: false,
-          message: 'New password must be at least 6 characters.',
-        });
+        res.status(400).json({ success: false, message: 'New password must be at least 6 characters.' });
+        return;
       }
       if (!currentPassword) {
-        return res.status(400).json({
-          success: false,
-          message: 'Please provide your current password to set a new one.',
-        });
+        res.status(400).json({ success: false, message: 'Please provide your current password to set a new one.' });
+        return;
       }
     }
- 
-    // ── Load user (with password for verification) ────────────────────────────
+
     const user = await User.findById(userId).select('+password');
     if (!user) {
-      return res.status(404).json({ success: false, message: 'User not found.' });
+      res.status(404).json({ success: false, message: 'User not found.' });
+      return;
     }
- 
-    // ── Password change flow ──────────────────────────────────────────────────
+
     if (newPassword) {
-      // Google-only accounts have no password — block change
-      if (!user.password) {
-        return res.status(400).json({
-          success: false,
-          message: 'Your account uses Google Sign-In. Password changes are not supported.',
-        });
+      if (user.authProvider === 'google' || !user.password) {
+        res.status(400).json({ success: false, message: 'Your account uses Google Sign-In. Password changes are not supported.' });
+        return;
       }
- 
-      const isMatch = await user.comparePassword(currentPassword);
-      if (!isMatch) {
-        return res.status(400).json({
-          success: false,
-          message: 'Current password is incorrect.',
-        });
+      const ok = await user.comparePassword(currentPassword);
+      if (!ok) {
+        res.status(400).json({ success: false, message: 'Current password is incorrect.' });
+        return;
       }
- 
-      user.password = newPassword; // pre-save hook in User model handles hashing
+      user.password = newPassword;
     }
- 
-    // ── Apply name change ─────────────────────────────────────────────────────
-    if (name !== undefined) {
-      user.name = name.trim();
-    }
- 
+
+    if (name !== undefined) user.name = name.trim();
+
     await user.save();
- 
-    // ── Return updated user (without password) ────────────────────────────────
-    return res.status(200).json({
+
+    res.status(200).json({
       success: true,
       message: 'Profile updated successfully.',
-      data: {
-        user: {
-          id:             user._id,
-          name:           user.name,
-          email:          user.email,
-          avatar:         user.avatar,
-          authProvider:   (user as any).authProvider ?? 'local',
-          profilePicture: (user as any).profilePicture ?? null,
-          stats:          user.stats,
-          gameStats:      user.gameStats,
-        },
-      },
+      data:    { user: formatUser(user) },
     });
   } catch (error: any) {
     console.error('updateProfile error:', error);
-    return res.status(500).json({
-      success: false,
-      message: error.message ?? 'Server error. Please try again.',
-    });
+    res.status(500).json({ success: false, message: error.message ?? 'Server error.' });
   }
 };

@@ -37,10 +37,6 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 // src/models/User.ts
-// Backward-compatible update:
-//   • password is now optional (Google users have none)
-//   • adds googleId, deviceId, profilePicture, authProvider
-//   • all existing fields/methods are preserved
 const mongoose_1 = __importStar(require("mongoose"));
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
 const UserSchema = new mongoose_1.Schema({
@@ -59,26 +55,17 @@ const UserSchema = new mongoose_1.Schema({
         trim: true,
         match: [/^\S+@\S+\.\S+$/, 'Please provide a valid email'],
     },
-    // No longer required — Google-auth users authenticate via token only
+    // FIX: password is now optional so Google users can be saved without one
     password: {
         type: String,
         minlength: [6, 'Password must be at least 6 characters'],
-        select: false,
+        select: false, // never returned in queries unless explicitly requested
     },
     avatar: { type: String, default: null },
+    // Google-specific fields
     profilePicture: { type: String, default: null },
-    // Sparse indexes: null values don't take an index slot, and uniqueness is
-    // only enforced among documents that actually have the field set.
-    googleId: {
-        type: String,
-        default: null,
-        index: { sparse: true },
-    },
-    deviceId: {
-        type: String,
-        default: null,
-        index: { sparse: true },
-    },
+    googleId: { type: String, default: null, sparse: true },
+    deviceId: { type: String, default: null },
     authProvider: {
         type: String,
         enum: ['local', 'google'],
@@ -91,32 +78,21 @@ const UserSchema = new mongoose_1.Schema({
         gamesTied: { type: Number, default: 0 },
     },
     gameStats: {
-        ticTacToe: {
-            wins: { type: Number, default: 0 },
-            losses: { type: Number, default: 0 },
-            ties: { type: Number, default: 0 },
-        },
-        chess: {
-            wins: { type: Number, default: 0 },
-            losses: { type: Number, default: 0 },
-            ties: { type: Number, default: 0 },
-        },
-        checkers: {
-            wins: { type: Number, default: 0 },
-            losses: { type: Number, default: 0 },
-            ties: { type: Number, default: 0 },
-        },
+        ticTacToe: { wins: { type: Number, default: 0 }, losses: { type: Number, default: 0 }, ties: { type: Number, default: 0 } },
+        chess: { wins: { type: Number, default: 0 }, losses: { type: Number, default: 0 }, ties: { type: Number, default: 0 } },
+        checkers: { wins: { type: Number, default: 0 }, losses: { type: Number, default: 0 }, ties: { type: Number, default: 0 } },
     },
     isOnline: { type: Boolean, default: false },
     lastActive: { type: Date, default: Date.now },
 }, { timestamps: true });
-// Hash password only when it is present and has been modified
+// Hash password before saving — only when it was modified and actually exists
 UserSchema.pre('save', async function () {
     if (!this.isModified('password') || !this.password)
         return;
     const salt = await bcryptjs_1.default.genSalt(10);
     this.password = await bcryptjs_1.default.hash(this.password, salt);
 });
+// comparePassword — safe for Google users (returns false if no password stored)
 UserSchema.methods.comparePassword = async function (candidatePassword) {
     if (!this.password)
         return false;

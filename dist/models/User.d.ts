@@ -4,7 +4,7 @@ export interface IUser extends Document {
     email: string;
     password?: string;
     avatar?: string;
-    profilePicture?: string;
+    profilePicture?: string | null;
     googleId?: string;
     deviceId?: string;
     authProvider: 'local' | 'google';
